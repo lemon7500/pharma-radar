@@ -1,0 +1,50 @@
+services:
+  - type: web
+    name: pharma-radar
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: npm ci --include=dev --no-audit --no-fund && npm run build -w @aihot/web
+    startCommand: node deploy/start-web.mjs
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 24.13.0
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_POOL_MAX
+        value: "3"
+      - key: TRUST_PROXY
+        value: "true"
+      - key: COLLECT_ENABLED
+        value: "false"
+      - key: MODEL_CALLS_ENABLED
+        value: "false"
+      - key: FEISHU_CONTENT_PUSH_ENABLED
+        value: "false"
+      - key: FEISHU_INTERNAL_ENABLED
+        value: "false"
+      - key: INDEXNOW_SUBMIT_ENABLED
+        value: "false"
+      - key: WORKER_STALE_MINUTES
+        value: "180"
+      - key: JOB_RETENTION_SECONDS
+        value: "86400"
+      - key: JOB_DELETE_AFTER_SECONDS
+        value: "86400"
+      - key: SITE_URL
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: SESSION_SECRET
+        sync: false
+      - key: IMG_PROXY_SIGN_SECRET
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_UPLOADS_BUCKET
+        value: pharma-uploads

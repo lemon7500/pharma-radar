@@ -1,0 +1,33 @@
+name: Pharma private backup
+on:
+  schedule:
+    - cron: '43 21 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: pharma-backup
+  cancel-in-progress: false
+jobs:
+  backup:
+    if: vars.BACKUP_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      SUPABASE_BACKUPS_BUCKET: pharma-backups
+      BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.13.0'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Install PostgreSQL client
+        run: |
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-client-17
+      - run: node deploy/backup.ts

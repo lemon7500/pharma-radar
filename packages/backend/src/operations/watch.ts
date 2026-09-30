@@ -14,7 +14,7 @@ async function writeSetting(key: string, value: unknown, by: string) {
 
 // The process manager restarts a crashed worker within seconds and a deploy restarts it on purpose;
 // half an hour without a heartbeat means those did not help.
-const WORKER_STALE_MS = 30 * 60_000;
+const WORKER_STALE_MS = Number(process.env.WORKER_STALE_MINUTES || 30) * 60_000;
 
 const WORKER_DOWN: Finding = {
   key: "worker",

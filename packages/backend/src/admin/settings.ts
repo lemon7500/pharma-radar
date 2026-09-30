@@ -1,14 +1,13 @@
 // Operator settings: about-page QR codes (replaced without a release), notification targets
 // (switching a group on records enabled_at so older content is never back-filled) and per-service
 // request budgets (the circuit breaker paid calls check before sending).
-import { mkdir, writeFile } from "node:fs/promises";
-import path from "node:path";
 import sharp from "sharp";
 import { config } from "../config.ts";
 import { sql } from "../db.ts";
 import { sha256 } from "../lib/ids.ts";
 import { loadContact, type ContactSettings } from "../site/contact.ts";
 import { audit } from "./auth.ts";
+import { putDurableFile } from "../operations/durable-files.ts";
 
 const MAX_QR_BYTES = 2 * 1024 * 1024;
 
@@ -20,9 +19,7 @@ export async function replaceContactQr(input: { slot: keyof ContactSettings; dat
   if ((meta.width ?? 0) < 120 || (meta.height ?? 0) < 120) throw new Error("图片太小，二维码可能扫不出来");
   const ext = meta.format === "jpeg" ? "jpg" : meta.format!;
   const name = `qr-${input.slot === "wechatQr" ? "wechat" : "feishu"}-${sha256(input.data).slice(0, 8)}.${ext}`;
-  const dir = path.join(config.dataDir, "uploads");
-  await mkdir(dir, { recursive: true });
-  await writeFile(path.join(dir, name), input.data);
+  await putDurableFile(`uploads/${name}`, input.data, `image/${meta.format}`);
   const before = await loadContact();
   const next = { ...before, [input.slot]: `/contact/${name}` };
   await sql`INSERT INTO settings (key, value, updated_by) VALUES ('contact_qr', ${sql.json(next)}, ${actor})

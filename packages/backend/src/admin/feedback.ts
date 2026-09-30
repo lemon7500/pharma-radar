@@ -1,11 +1,11 @@
 // Feedback handling: list, status and note, per-source bans, and deletion on request
 // (privacy notice: feedback material is removed once handling ends or when the sender asks).
-import { unlink } from "node:fs/promises";
 import path from "node:path";
 import { config } from "../config.ts";
 import { sql } from "../db.ts";
 import { audit } from "./auth.ts";
 import { Conflict } from "./sources.ts";
+import { removeDurableFile, restoreDurableFile } from "../operations/durable-files.ts";
 
 export const FEEDBACK_STATUSES = ["new", "triaged", "replied", "resolved", "spam"] as const;
 export type FeedbackStatus = (typeof FEEDBACK_STATUSES)[number];
@@ -61,7 +61,9 @@ function screenshotPath(key: string | null): string | null {
 
 export async function feedbackScreenshot(id: number): Promise<string | null> {
   const [row] = await sql<{ screenshot_key: string | null }[]>`SELECT screenshot_key FROM feedback WHERE id = ${id}`;
-  return screenshotPath(row?.screenshot_key ?? null);
+  const file = screenshotPath(row?.screenshot_key ?? null);
+  if (file) await restoreDurableFile(`feedback-screenshots/${path.basename(file)}`);
+  return file;
 }
 
 /** Removes the sender's material (text, email, page, screenshot) and keeps only the handling record. */
@@ -70,7 +72,7 @@ export async function eraseFeedback(id: number, reason: string, actor: string) {
   const [row] = await sql<{ screenshot_key: string | null }[]>`SELECT screenshot_key FROM feedback WHERE id = ${id}`;
   if (!row) return null;
   const file = screenshotPath(row.screenshot_key);
-  if (file) await unlink(file).catch(() => {});
+  if (file) await removeDurableFile(`feedback-screenshots/${path.basename(file)}`);
   await sql`UPDATE feedback SET content = '（已按要求删除）', email = NULL, page_url = NULL, screenshot_key = NULL, updated_at = now() WHERE id = ${id}`;
   await audit(actor, "feedback.erase", `feedback:${id}`, reason, null, null);
   return { erased: true };

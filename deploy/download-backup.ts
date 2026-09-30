@@ -1,0 +1,11 @@
+import { mkdir,writeFile } from "node:fs/promises";
+import path from "node:path";
+import { createClient } from "@supabase/supabase-js";
+import { downloadBackup } from "./backup-files.ts";
+if(!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) throw new Error("Missing backup storage credentials");
+const client=createClient(process.env.SUPABASE_URL,process.env.SUPABASE_SERVICE_ROLE_KEY,{auth:{persistSession:false,autoRefreshToken:false}});
+const payload=await downloadBackup(client.storage.from(process.env.SUPABASE_BACKUPS_BUCKET || "pharma-backups"));
+const file=path.resolve(process.argv[2] || ".data/backups/latest.dump.enc");
+await mkdir(path.dirname(file),{recursive:true});
+await writeFile(file,payload,{flag:"wx"});
+console.log("Encrypted backup downloaded and checked. Existing files were not overwritten.");

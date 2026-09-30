@@ -1,0 +1,10 @@
+import { readFile,writeFile } from 'node:fs/promises';
+import { decryptBackup } from './backup-files.ts';
+const [input,output]=process.argv.slice(2);
+if(!input||!output) throw new Error('Usage: node deploy/decrypt-backup.mjs encrypted-file output.dump');
+const key=Buffer.from(process.env.BACKUP_ENCRYPTION_KEY||'','hex');
+if(key.length!==32) throw new Error('Missing backup encryption key');
+const payload=await readFile(input);
+const dump=decryptBackup(payload,key);
+await writeFile(output,dump,{flag:'wx'});
+console.log('Backup decrypted. Restore only into a fresh database.');

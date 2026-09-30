@@ -35,6 +35,12 @@ jobs:
       API_BASE_URL: http://127.0.0.1:3001
       SESSION_SECRET: ci-session-secret-0123456789abcdef
       IMG_PROXY_SIGN_SECRET: ci-img-secret-0123456789abcdef
+      COLLECT_ENABLED: "false"
+      MODEL_CALLS_ENABLED: "false"
+      FEISHU_CONTENT_PUSH_ENABLED: "false"
+      FEISHU_FEEDBACK_PUSH_ENABLED: "false"
+      FEISHU_ALERT_PUSH_ENABLED: "false"
+      INDEXNOW_SUBMIT_ENABLED: "false"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -61,13 +67,24 @@ jobs:
           COLLECT_ENABLED: "false"
           MODEL_CALLS_ENABLED: "false"
         run: |
-          node apps/api/src/main.ts > "$RUNNER_TEMP/api.log" 2>&1 &
-          (cd apps/web && NODE_ENV=production exec node server.ts) > "$RUNNER_TEMP/web.log" 2>&1 &
+          WEB_PORT=3000 NODE_ENV=production node deploy/start-web.mjs > "$RUNNER_TEMP/web.log" 2>&1 &
           for i in $(seq 1 60); do curl -fsS -o /dev/null http://127.0.0.1:3000/api/health 2>/dev/null && break; sleep 1; done
           node scripts/smoke.ts --base http://127.0.0.1:3000
           node scripts/mcp-check.ts http://127.0.0.1:3000/api/mcp
+      - name: Finite worker with outside calls disabled
+        env:
+          BATCH_MAX_MINUTES: "0.2"
+        run: node deploy/batch-worker.ts
       # After the smoke check, which reads an empty database: these write their own rows.
       - name: Backend tests
+        # Only local HTTP stubs: reject any model request not explicitly redirected by a test.
+        env:
+          MODEL_CALLS_ENABLED: "true"
+          DASHSCOPE_BASE_URL: http://127.0.0.1:9/v1
+          ZHIPU_BASE_URL: http://127.0.0.1:9/v1
+          DEEPSEEK_BASE_URL: http://127.0.0.1:9/v1
+          XIAOMI_MIMO_BASE_URL: http://127.0.0.1:9/v1
+          LLM_BASE_URL: http://127.0.0.1:9/v1
         run: npm test
       - name: Server logs
         if: failure()
@@ -96,7 +113,7 @@ jobs:
           for i in $(seq 1 90); do curl -fsS -o /dev/null http://127.0.0.1:3000/api/health 2>/dev/null && break; sleep 2; done
           docker compose ps
           docker compose run --rm --no-deps --entrypoint node setup scripts/smoke.ts --base http://web:3000
-          docker compose exec -T db psql -U aihot -d aihot -Atc "select count(*) from sources" | grep -q '^18$'
+          docker compose exec -T db psql -U aihot -d aihot -Atc "select count(*) from sources" | grep -q '^5$'
       - name: Logs
         if: failure()
         run: docker compose logs --tail 80

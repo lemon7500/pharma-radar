@@ -1,0 +1,44 @@
+name: Pharma collection
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: pharma-worker
+  cancel-in-progress: false
+jobs:
+  collect:
+    if: vars.COLLECT_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NODE_ENV: production
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_POOL_MAX: '3'
+      SITE_URL: ${{ vars.SITE_URL }}
+      SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+      IMG_PROXY_SIGN_SECRET: ${{ secrets.IMG_PROXY_SIGN_SECRET }}
+      LLM_BASE_URL: ${{ vars.LLM_BASE_URL }}
+      LLM_MODEL: ${{ vars.LLM_MODEL }}
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_EXTRA_JSON: ${{ vars.LLM_EXTRA_JSON }}
+      COLLECT_ENABLED: 'true'
+      MODEL_CALLS_ENABLED: ${{ vars.MODEL_CALLS_ENABLED }}
+      FEISHU_INTERNAL_ENABLED: 'false'
+      FEISHU_CONTENT_PUSH_ENABLED: 'false'
+      INDEXNOW_SUBMIT_ENABLED: 'false'
+      ANALYZE_CONCURRENCY: '2'
+      FETCH_CONCURRENCY: '2'
+      BATCH_MAX_MINUTES: '20'
+      JOB_RETENTION_SECONDS: '86400'
+      JOB_DELETE_AFTER_SECONDS: '86400'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.13.0'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: node deploy/batch-worker.ts

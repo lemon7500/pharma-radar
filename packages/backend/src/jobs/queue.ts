@@ -73,7 +73,7 @@ export async function ensureQueue(name: string, options: QueueOptions = QUEUE_OP
   if (ensured.has(name)) return;
   const b = await getBoss();
   const existing = await b.getQueue(name);
-  if (!existing) await b.createQueue(name, options);
+  if (!existing) await b.createQueue(name, { retentionSeconds: Number(process.env.JOB_RETENTION_SECONDS || 1_209_600), deleteAfterSeconds: Number(process.env.JOB_DELETE_AFTER_SECONDS || 604_800), ...options });
   ensured.add(name);
 }
 
