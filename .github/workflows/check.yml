@@ -35,6 +35,7 @@ jobs:
       API_BASE_URL: http://127.0.0.1:3001
       SESSION_SECRET: ci-session-secret-0123456789abcdef
       IMG_PROXY_SIGN_SECRET: ci-img-secret-0123456789abcdef
+      ADMIN_PASSWORD: ci-admin-password-0123456789abcdef
       COLLECT_ENABLED: "false"
       MODEL_CALLS_ENABLED: "false"
       FEISHU_CONTENT_PUSH_ENABLED: "false"
@@ -76,6 +77,18 @@ jobs:
           BATCH_MAX_MINUTES: "0.2"
         run: node deploy/batch-worker.ts
       # After the smoke check, which reads an empty database: these write their own rows.
+      - name: PostgreSQL 17 clients for backup restore verification
+        # Reuse the service image, so pg_dump/pg_restore match the server without host packages.
+        run: |
+          mkdir -p "$RUNNER_TEMP/pg-client" .data/backups
+          for client in pg_dump pg_restore; do
+            cat > "$RUNNER_TEMP/pg-client/$client" <<'SH'
+          #!/bin/sh
+          exec docker run --rm --network host -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -e PGDATABASE -e PGSSLMODE -v "$PWD/.data/backups:$PWD/.data/backups" postgres:17-alpine "$(basename "$0")" "$@"
+          SH
+            chmod +x "$RUNNER_TEMP/pg-client/$client"
+          done
+          echo "$RUNNER_TEMP/pg-client" >> "$GITHUB_PATH"
       - name: Backend tests
         # Only local HTTP stubs: reject any model request not explicitly redirected by a test.
         env:
@@ -85,6 +98,7 @@ jobs:
           DEEPSEEK_BASE_URL: http://127.0.0.1:9/v1
           XIAOMI_MIMO_BASE_URL: http://127.0.0.1:9/v1
           LLM_BASE_URL: http://127.0.0.1:9/v1
+          TEST_PG_BACKUP: "true"
         run: npm test
       - name: Server logs
         if: failure()
