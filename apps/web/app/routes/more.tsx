@@ -23,7 +23,7 @@ const GROUPS: Array<{ title: string; rows: Row[] }> = [
   {
     title: "内容",
     rows: [
-      { to: "/topics", label: "主题索引", icon: <IconGrid size={18} /> },
+      { to: "/topics", label: "专题索引", icon: <IconGrid size={18} /> },
       ...(FEATURES.leaderboard ? [{ to: "/leaderboard", label: "模型榜", icon: <IconChart size={18} /> }] : []),
       ...(FEATURES.codexResetMonitor ? [{ to: "/codex-reset", label: "Tibo重置监控", icon: <IconHistory size={18} /> }] : []),
       { to: "/agent", label: "Agent 接入", icon: <IconPlug size={18} /> },
@@ -32,8 +32,8 @@ const GROUPS: Array<{ title: string; rows: Row[] }> = [
   {
     title: "偏好",
     rows: [
-      { to: "/hot", label: "热点榜", icon: <IconFlame size={18} /> },
-      { to: "/starred", label: "收藏", icon: <IconBookmark size={18} /> },
+      { to: "/hot", label: "研究动态", icon: <IconFlame size={18} /> },
+      { to: "/starred", label: "阅读清单", icon: <IconBookmark size={18} /> },
     ],
   },
   {

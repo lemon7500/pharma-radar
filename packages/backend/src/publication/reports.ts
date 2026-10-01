@@ -6,6 +6,7 @@ import { cached, type Cached } from "../lib/cache.ts";
 import { proxiedImage, proxiedImageSet } from "../media/imgproxy.ts";
 import { dailyUrl, itemUrl, siteUrl } from "./links.ts";
 import { SITE, withSubject } from "@aihot/industry/site";
+import { RESEARCH_AREAS } from "@aihot/contracts/research";
 
 export type { ReportKind };
 
@@ -26,14 +27,16 @@ interface Availability {
   sourceIcon: string | null;
   storyPublicId: string | null;
   publishedAt: Date | null;
+  researchArea: string | null;
+  category: string | null;
 }
 
 async function availability(ids: string[]): Promise<Map<string, Availability>> {
   const out = new Map<string, Availability>();
   if (ids.length === 0) return out;
-  const rows = await sql<{ id: string; visibility: string; eligible: boolean; first_party: boolean; source_id: string; icon_url: string | null; story_public_id: string | null; at: Date | null }[]>`
+  const rows = await sql<{ id: string; visibility: string; eligible: boolean; first_party: boolean; source_id: string; icon_url: string | null; story_public_id: string | null; at: Date | null; research_area:string|null; category:string|null }[]>`
     SELECT p.article_id AS id, p.visibility, p.eligible, p.first_party, p.source_id, s.icon_url, st.public_id::text AS story_public_id,
-      coalesce(p.published_at, p.discovered_at) AS at
+      coalesce(p.published_at, p.discovered_at) AS at, p.research->'areas'->>0 AS research_area, p.category
     FROM publications p LEFT JOIN sources s ON s.id = p.source_id LEFT JOIN stories st ON st.id = p.story_id
     WHERE p.article_id IN ${sql(ids)}`;
   for (const r of rows) {
@@ -44,6 +47,7 @@ async function availability(ids: string[]): Promise<Map<string, Availability>> {
       sourceIcon: r.icon_url,
       storyPublicId: r.story_public_id,
       publishedAt: r.at,
+      researchArea:r.research_area,category:r.category,
     });
   }
   return out;
@@ -207,9 +211,18 @@ export async function loadReport(kind: ReportKind, key: string): Promise<ReportD
   const avail = await availability([...new Set(rawItems.map((i) => i.itemId).filter(Boolean))]);
   const cite = (raw: Record<string, any>) => citationFrom(raw, avail);
 
-  const sections = kind === "daily"
+  const originalSections = kind === "daily"
     ? (c.sections ?? []).map((s: any) => ({ label: String(s.label), summary: null, items: (s.items ?? []).map(cite) }))
     : (c.themes ?? []).map((t: any) => ({ label: String(t.heading), summary: t.summary ?? null, items: (t.storyRefs ?? []).map(cite) }));
+  const grouped = new Map<string,ReportCitation[]>();
+  for (const section of originalSections) for (const item of section.items) {
+    const a = item.itemId ? avail.get(item.itemId) : undefined;
+    const label = RESEARCH_AREAS.find(v => v.key === a?.researchArea)?.label ?? (["regulation","industry"].includes(a?.category || "") ? "监管与产业资讯" : "研究环节待确认");
+    const list = grouped.get(label) || [];
+    if (!item.itemId || !list.some(v => v.itemId === item.itemId)) list.push(item);
+    grouped.set(label,list);
+  }
+  const sections = [...RESEARCH_AREAS.map(v => v.label),"监管与产业资讯","研究环节待确认"].filter(label => grouped.has(label)).map(label => ({label,summary:null,items:grouped.get(label)!}));
   const labelled: Array<ReportCitation & { label: string }> = sections.flatMap((s: { label: string; items: ReportCitation[] }) => s.items.map((i) => ({ ...i, label: s.label })));
   // Weekly and monthly reports carry the editor's reading order across themes.
   const order: string[] = Array.isArray(c.storyOrder) ? c.storyOrder : [];

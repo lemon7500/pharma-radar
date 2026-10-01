@@ -3,7 +3,7 @@
 // the industry pack (industry/prompts/report-*.md), the sections follow its categories.
 import { z } from "zod";
 import { SITE } from "@aihot/industry/site";
-import { CATEGORIES } from "@aihot/industry/taxonomy";
+import { RESEARCH_AREAS } from "@aihot/contracts/research";
 import { promptText, promptVersion } from "../editorial/prompts.ts";
 import { modelFor } from "../editorial/models.ts";
 import { addDays, beijingDate, beijingMidnight, isoWeekLabel, isoWeekRange } from "@aihot/contracts/time";
@@ -14,10 +14,12 @@ import { shutdownSignal } from "../jobs/queue.ts";
 
 export const REPORT_VERSION = promptVersion("report-daily-lead", "report-period");
 
-const SECTION_OF: Record<string, string> = Object.fromEntries(CATEGORIES.map((c) => [c.key, c.section]));
-const SECTION_ORDER = [...new Set(CATEGORIES.map((c) => c.section))];
+const SECTION_ORDER = [...RESEARCH_AREAS.map(a => a.label), "监管与产业资讯", "研究环节待确认"];
 /** Where an item without a category goes. */
-const DEFAULT_SECTION = SECTION_OF.industry ?? SECTION_ORDER.at(-1)!;
+const DEFAULT_SECTION = "研究环节待确认";
+export function researchSection(candidate: Pick<Candidate,"category" | "researchArea">): string {
+  return RESEARCH_AREAS.find(a => a.key === candidate.researchArea)?.label ?? (["regulation","industry"].includes(candidate.category || "") ? "监管与产业资讯" : DEFAULT_SECTION);
+}
 
 export interface ReportEntry {
   itemId: string;
@@ -35,6 +37,7 @@ export interface ReportEntry {
 }
 
 export interface Candidate extends ReportEntry {
+  researchArea?: string | null;
   category: string | null;
   factKey: string;
 }
@@ -53,10 +56,10 @@ export async function candidates(start: Date, end: Date): Promise<Candidate[]> {
     await tx`SELECT pg_advisory_xact_lock(hashtext('report_candidates'))`;
     return tx<{
       id: string; title: string; summary: string | null; url: string; category: string | null; score: number | null; first_party: boolean;
-      source_id: string; source_name: string; source_kind: string; fact_public_id: string | null; story_public_id: string | null; at: Date; backfill: boolean;
+      source_id: string; source_name: string; source_kind: string; fact_public_id: string | null; story_public_id: string | null; at: Date; backfill: boolean; research_area:string|null;
     }[]>`
       SELECT p.article_id AS id, p.title, p.summary, p.url, p.category, p.score, p.first_party, s.id AS source_id, s.name AS source_name,
-             s.kind AS source_kind, f.public_id AS fact_public_id, st.public_id::text AS story_public_id, p.timeline_at AS at, p.backfill
+             s.kind AS source_kind, f.public_id AS fact_public_id, st.public_id::text AS story_public_id, p.timeline_at AS at, p.backfill, p.research->'areas'->>0 AS research_area
       FROM publications p JOIN sources s ON s.id = p.source_id
       LEFT JOIN facts f ON f.id = p.fact_id LEFT JOIN stories st ON st.id = f.story_id
       -- Attribute each item by the later of arrival and release; either range can use its index.
@@ -73,7 +76,7 @@ export async function candidates(start: Date, end: Date): Promise<Candidate[]> {
     const c: Candidate = {
       itemId: r.id, factId: r.fact_public_id, storyPublicId: r.story_public_id, title: r.title, summary: r.summary ?? "",
       sourceName: r.source_name, sourceUrl: r.url, sourceId: r.source_id, firstParty: r.first_party, role: roleOf(r.source_kind, r.first_party),
-      score: r.score === null ? null : Number(r.score), publishedAt: r.at.toISOString(), category: r.category, factKey: key,
+      score: r.score === null ? null : Number(r.score), publishedAt: r.at.toISOString(), category: r.category, factKey: key, researchArea:r.research_area,
     };
     const prev = byFact.get(key);
     if (!prev || Number(c.firstParty) - Number(prev.firstParty) > 0 || (c.firstParty === prev.firstParty && (c.score ?? 0) > (prev.score ?? 0))) byFact.set(key, c);
@@ -143,7 +146,7 @@ export async function composeDaily(date: string, reason = "scheduled"): Promise<
   const perSection = new Map<string, Candidate[]>();
   const flashes: Array<{ itemId: string; title: string; sourceName: string; sourceUrl: string; publishedAt: string }> = [];
   for (const c of fresh) {
-    const label = SECTION_OF[c.category ?? ""] ?? DEFAULT_SECTION;
+    const label = researchSection(c);
     const list = perSection.get(label) ?? [];
     if (list.length < 8) list.push(c);
     else if (flashes.length < 12) flashes.push({ itemId: c.itemId, title: c.title, sourceName: c.sourceName, sourceUrl: c.sourceUrl, publishedAt: c.publishedAt });
@@ -190,7 +193,7 @@ export const PeriodSchema = z.object({
 
 /** The editor's brief for a week or month: its top entries as a numbered list, each with its section. */
 export function periodPrompt(kind: "weekly" | "monthly", startDate: string, endDateInclusive: string, top: Candidate[]) {
-  const list = top.map((e, i) => `${i + 1}. [${SECTION_OF[e.category ?? ""] ?? DEFAULT_SECTION}] ${e.title}｜${e.summary.slice(0, 140)}`).join("\n");
+  const list = top.map((e, i) => `${i + 1}. [${researchSection(e)}] ${e.title}｜${e.summary.slice(0, 140)}`).join("\n");
   return {
     system: promptText("report-period", { kindName: kind === "weekly" ? "周报" : "月报", overviewLength: kind === "weekly" ? "150–300" : "200–400" }),
     user: `本期：${startDate} 至 ${endDateInclusive}\n${list}`,
@@ -216,11 +219,8 @@ async function composePeriod(kind: "weekly" | "monthly", key: string, startDate:
     receiptId = res.receiptId;
     headline = res.data.headline.trim();
     overview = res.data.overview;
-    themes = res.data.themes.map((t) => ({
-      heading: t.heading,
-      summary: t.summary,
-      storyRefs: t.refs.map((r) => top[Number(r) - 1]).filter((e): e is Candidate => !!e).map(({ category: _c, factKey: _f, ...e }) => e),
-    }));
+    // Stable research-stage sections; the model's overview does not choose navigation labels.
+    themes = SECTION_ORDER.map(heading => ({ heading, summary:"", storyRefs:top.filter(e => researchSection(e) === heading).map(({category:_c,factKey:_f,researchArea:_a,...e}) => e) })).filter(t => t.storyRefs.length);
   }
   const content = {
     kind,

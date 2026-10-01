@@ -17,6 +17,7 @@ import { beat, startHeartbeat } from "@aihot/backend/operations/heartbeat";
 import { dailyRetention } from "@aihot/backend/operations/retention";
 import { autoReleaseUnknownReceipts } from "@aihot/backend/admin/runs";
 import { markStalePendingReceipts } from "@aihot/backend/providers/receipts";
+import { backfillResearch } from "@aihot/backend/research/backfill";
 
 assertProductionSecrets([["auth", "IMG_PROXY_SIGN_SECRET"]]);
 const maximumMinutes = Number(process.env.BATCH_MAX_MINUTES || 20);
@@ -64,6 +65,7 @@ try {
     if (process.env.MODEL_CALLS_ENABLED === "true") await recordRun("reports.catch-up",()=>catchUpReports());
   }
   const [retention] = await sql<{at:Date|null}[]>`SELECT max(finished_at) AS at FROM job_runs WHERE job='ops.retention' AND status='ok'`;
+  if (Date.now() < deadline - 240_000) await recordRun("research.backfill", () => backfillResearch({ deadline, limit: Number(process.env.RESEARCH_BACKFILL_LIMIT || 20) }));
   if (!retention.at || Date.now()-retention.at.getTime()>86400_000) await recordRun("ops.retention",()=>dailyRetention());
   const [size] = await sql<{bytes:number}[]>`SELECT pg_database_size(current_database()) AS bytes`;
   console.log(JSON.stringify({stage:"batch.finished",databaseBytes:size.bytes,warning:size.bytes>400_000_000 ? "database-near-free-limit" : null}));

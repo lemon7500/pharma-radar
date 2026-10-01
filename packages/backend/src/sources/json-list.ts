@@ -3,6 +3,7 @@ import { credential } from "../config.ts";
 import { guardedFetch } from "../lib/http-fetch.ts";
 import { collapseWhitespace, stripTags } from "../lib/text.ts";
 import { FetchError, type Candidate, type SourceRow } from "./types.ts";
+import { europePmcBibliography } from "../research/profile.ts";
 
 export function getPath(obj: unknown, path: string): unknown {
   if (!path) return obj;
@@ -168,6 +169,7 @@ export async function fetchJsonList(source: SourceRow): Promise<Candidate[]> {
     const raw = item && typeof item === "object" ? { ...(item as Record<string, unknown>) } : { value: item };
     for (const k of c.rawDropKeys ?? []) delete (raw as Record<string, unknown>)[k];
     const summaryIsBody = c.summaryIsBody === true && !!summary;
+    const isEuropePmc = /^https:\/\/www\.ebi\.ac\.uk\/europepmc\/webservices\//.test(String(c.url));
     out.push({
       url,
       title: collapseWhitespace(stripTags(title)),
@@ -176,6 +178,7 @@ export async function fetchJsonList(source: SourceRow): Promise<Candidate[]> {
       excerpt: summary ? collapseWhitespace(stripTags(summary)).slice(0, 2000) : null,
       bodyText: summaryIsBody ? stripTags(summary!) : null,
       bodyStatus: summaryIsBody ? "ok" : "pending",
+      ...(isEuropePmc ? { bibliography: europePmcBibliography(item) } : {}),
       raw: { externalId: externalId ?? null },
     });
   }

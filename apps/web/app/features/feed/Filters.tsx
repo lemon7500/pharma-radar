@@ -68,18 +68,18 @@ export function SearchField({ action = "/all", defaultValue = "", keep = {}, var
       <Form method="get" action={action} role="search" className="flex gap-2">
         {hidden}
         <label className="relative flex-1">
-          <span className="sr-only">搜索标题、摘要与正文</span>
+          <span className="sr-only">搜索标题、作者、期刊、DOI 与摘要</span>
           <IconSearch size={17} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-4" />
           <input
             ref={inputRef}
             name="q"
             value={value}
             onChange={(e) => setValue(e.target.value)}
-            placeholder="搜索标题、摘要…"
+            placeholder="搜索标题、作者、期刊或 DOI"
             maxLength={200}
             autoComplete="off"
             enterKeyHint="search"
-            className="h-11 w-full rounded-full border border-line-strong bg-surface pl-10 pr-9 text-[15px] text-ink outline-none transition-[border-color,box-shadow] placeholder:text-ink-4 focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]"
+            className="h-11 w-full rounded-control border border-line-strong bg-surface pl-10 pr-9 text-[15px] text-ink outline-none transition-[border-color,box-shadow] placeholder:text-ink-4 focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]"
           />
           {value && (
             <button type="button" aria-label="清空" onClick={() => { setValue(""); inputRef.current?.focus(); }} className="absolute right-2.5 top-1/2 grid size-7 -translate-y-1/2 place-items-center rounded-full text-ink-4">
@@ -87,7 +87,7 @@ export function SearchField({ action = "/all", defaultValue = "", keep = {}, var
             </button>
           )}
         </label>
-        <button type="submit" className={`h-11 shrink-0 rounded-full bg-accent px-5 text-[14.5px] font-semibold text-accent-contrast transition-[background-color,transform] active:scale-[0.98] ${searching ? "opacity-60" : ""}`}>
+        <button type="submit" className={`h-11 shrink-0 rounded-control bg-accent px-5 text-[14.5px] font-semibold text-accent-contrast transition-[background-color,transform] active:scale-[0.98] ${searching ? "opacity-60" : ""}`}>
           搜索
         </button>
       </Form>

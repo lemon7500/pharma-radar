@@ -1,6 +1,6 @@
-# 药研雷达 · pharma-radar
+# Pharma Radar
 
-从天然产物到 AI 制药，追踪可溯源的药学研究与产业动态。
+面向药学学生与研究者的研究阅读站：发现资料，判断证据范围，找到原文，持续追踪研究方向。v2 采用学术期刊式布局及独立组合筛选，详见 [升级与运维说明](docs/pharma-radar-v2.md)。
 
 本项目基于 [AIHOT](https://github.com/KKKKhazix/AIHOT) 定制，保留上游 MIT 许可证。网页、后台、采集、模型筛选、事件归组、日报、RSS、公开 API 和 MCP 共用一套公开内容读取层。
 

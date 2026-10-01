@@ -20,12 +20,11 @@ export const SIDEBAR: Array<{ title: string; items: NavItem[] }> = [
   {
     title: "内容",
     items: [
-      { to: "/", label: "精选", icon: IconBolt, end: true },
-      { to: "/all", label: `全部${withSubject("动态")}`, icon: IconList },
-      { to: "/hot", label: "热点榜", icon: IconFlame },
-      { to: "/daily", label: withSubject("日报"), icon: IconDoc },
-      { to: "/topics", label: "主题", icon: IconGrid },
-      { to: "/starred", label: "收藏", icon: IconBookmark },
+      { to: "/", label: "导读", icon: IconBolt, end: true },
+      { to: "/all", label: "资料库", icon: IconList },
+      { to: "/topics", label: "专题", icon: IconGrid },
+      { to: "/daily", label: "研究简报", icon: IconDoc },
+      { to: "/starred", label: "阅读清单", icon: IconBookmark },
     ],
   },
   // The optional AI-only modules (industry/features.ts).
@@ -43,6 +42,7 @@ export const SIDEBAR: Array<{ title: string; items: NavItem[] }> = [
   {
     title: "更多",
     items: [
+      { to: "/hot", label: "研究动态", icon: IconFlame },
       { to: "/agent", label: "Agent 接入", icon: IconPlug },
       { to: "/about", label: "关于", icon: IconHeart },
       { to: "/changelog", label: "更新日志", icon: IconHistory, changelog: true },
@@ -52,14 +52,15 @@ export const SIDEBAR: Array<{ title: string; items: NavItem[] }> = [
 ];
 
 export const TABBAR: NavItem[] = [
-  { to: "/", label: "精选", icon: IconBolt, end: true },
-  { to: "/all", label: "全部", icon: IconList },
-  { to: "/daily", label: "日报", icon: IconDoc },
+  { to: "/", label: "导读", icon: IconBolt, end: true },
+  { to: "/all", label: "资料库", icon: IconList },
+  { to: "/topics", label: "专题", icon: IconGrid },
+  { to: "/daily", label: "简报", icon: IconDoc },
   { to: "/more", label: "更多", icon: IconApps, changelog: true },
 ];
 
 /** Pages reached from the mobile "更多" tab keep that tab highlighted. */
-export const MORE_PATHS = ["/more", "/hot", "/topics", "/starred", "/leaderboard", "/codex-reset", "/agent", "/about", "/changelog", "/feedback", "/terms", "/privacy"];
+export const MORE_PATHS = ["/more", "/hot", "/starred", "/leaderboard", "/codex-reset", "/agent", "/about", "/changelog", "/feedback", "/terms", "/privacy"];
 
 export function tabIsActive(item: NavItem, pathname: string): boolean {
   if (item.end) return pathname === item.to;

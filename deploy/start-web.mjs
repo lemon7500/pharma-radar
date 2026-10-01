@@ -32,6 +32,7 @@ try {
   // Database and secrets are never written to build artifacts.
   await command('scripts/migrate.ts');
   await command('scripts/seed.ts');
+  await command('deploy/research-baseline.ts');
   process.env.API_PORT ||= '3001';
   process.env.API_HOST = '127.0.0.1';
   process.env.API_BASE_URL = `http://127.0.0.1:${process.env.API_PORT}`;

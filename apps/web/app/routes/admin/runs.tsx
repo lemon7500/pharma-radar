@@ -10,6 +10,7 @@ import { AdminPage, Badge, Button, Card, DataTable, Dot, Empty, Field, Json, Rea
 
 type Row = Record<string, any>;
 interface Runs {
+  research:{total:number;ready:number;insufficient:number;waiting:number;retrying:number;attempted:number;database_bytes:string;requests:number;cost:string;paused:boolean;pauseReason:string|null};
   checkedAt: string;
   processes: Array<{ role: string; pid: number; host: string; release: string; startedAt: string; at: string; alive: boolean }>;
   jobs: Row[];
@@ -44,6 +45,7 @@ export default function RunsAdmin({ loaderData }: Route.ComponentProps) {
   const [outcome, setOutcome] = useState<"sent" | "drop" | "resend">("sent");
   // Failure group to put back into processing ("" = every failure of the last 30 days).
   const [requeue, setRequeue] = useState<string | null>(null);
+  const [researchPause,setResearchPause] = useState(false);
 
   // Live view: refresh every 20 s while visible.
   useEffect(() => {
@@ -71,6 +73,11 @@ export default function RunsAdmin({ loaderData }: Route.ComponentProps) {
         <Stat label="投递待核实" value={num(r.deliveries.filter((d) => d.status === "unknown").length)} tone={r.deliveries.some((d) => d.status === "unknown") ? "bad" : "ok"} />
       </div>
 
+      <ReasonDialog open={researchPause} title={r.research.paused?'恢复渐进回填':'暂停渐进回填'} description="只改变旧稿研究整理的运行状态，正常采集与阅读继续运行；恢复后仍遵守每日 20 篇上限。" confirmLabel="应用" busy={pending==='research-pause'} onClose={()=>setResearchPause(false)} onSubmit={async reason=>(await run('POST','/api/admin/research/backfill',{paused:!r.research.paused,reason},{label:'research-pause',success:'回填状态已更新'}))!==null} />
+      <div className="mb-5"><Card title="研究整理与资源用量" right={<Button size="sm" onClick={()=>setResearchPause(true)}>{r.research.paused?'恢复渐进回填':'暂停渐进回填'}</Button>}>
+        {r.research.paused && <p className="mb-4 text-[13px] text-hot">已暂停：{r.research.pauseReason || '管理员暂停'}</p>}
+        <div className="grid grid-cols-2 gap-4 text-[13px]"><p>导读已整理 <strong>{r.research.ready}</strong> / {r.research.total}</p><p>材料不足 <strong>{r.research.insufficient}</strong></p><p>等待整理 <strong>{r.research.waiting}</strong></p><p>待重试 <strong>{r.research.retrying}</strong></p><p>24 小时旧稿 <strong>{r.research.attempted}</strong> / 20</p><p>数据库 <strong>{(Number(r.research.database_bytes)/1048576).toFixed(1)}</strong> MB</p><p>回填模型请求 <strong>{r.research.requests}</strong> 次</p><p>已记录费用 <strong>{Number(r.research.cost).toFixed(4)}</strong></p></div><p className="mt-4 text-[12px] text-ink-3">仅统计研究回填；模型用量及最终账单请在服务商核对。暂停后保留正常采集与阅读。</p>
+      </Card></div>
       <div className="grid gap-5 xl:grid-cols-2">
         <Card title="队列" pad={false}>
           <DataTable

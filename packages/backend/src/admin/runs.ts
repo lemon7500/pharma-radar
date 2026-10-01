@@ -5,6 +5,7 @@ import { audit } from "./auth.ts";
 import { Conflict } from "./sources.ts";
 import { failureGroupSql, queueProcessing, requeueFailed } from "../jobs/content.ts";
 import { CAPABILITIES } from "../editorial/models.ts";
+import { researchBackfillPaused } from "../research/backfill.ts";
 
 const STALE_HEARTBEAT_MS = 3 * 60_000;
 
@@ -55,7 +56,16 @@ export async function runsOverview() {
   const [retrying] = await sql<{ n: number; next: Date | null }[]>`
     SELECT count(*)::int AS n, min(processing_retry_at) AS next FROM articles WHERE processing_state = 'new' AND processing_attempts > 0`;
   const now = Date.now();
+  const [research] = await sql`SELECT count(*)::int AS total,
+    count(*) FILTER(WHERE research_profile->>'status'='ready')::int AS ready,
+    count(*) FILTER(WHERE research_profile->>'status'='insufficient')::int AS insufficient,
+    count(*) FILTER(WHERE research_enriched_at IS NULL)::int AS waiting,
+    count(*) FILTER(WHERE research_retry_at IS NOT NULL)::int AS retrying,
+    count(*) FILTER(WHERE research_backfill_attempted_at >= now()-interval '24 hours')::int AS attempted,
+    pg_database_size(current_database()) AS database_bytes FROM articles`;
+  const [modelUsage] = await sql`SELECT count(*)::int AS requests,coalesce(sum(cost),0) AS cost FROM receipts WHERE purpose='research_backfill' AND created_at >= now()-interval '24 hours'`;
   return {
+    research:{...research,...modelUsage,paused:await researchBackfillPaused(),pauseReason:(await sql`SELECT value->>'reason' AS reason FROM settings WHERE key='research.backfill.paused'`)[0]?.reason || null},
     checkedAt: new Date(now).toISOString(),
     processes: heartbeats.map((h) => ({
       role: h.key.slice("heartbeat.".length),
@@ -77,6 +87,14 @@ export async function runsOverview() {
       ? { at: leaderboard[0].value.at, sources: Object.entries(leaderboard[0].value.sources).map(([key, v]) => ({ key, ...v })).sort((a, b) => Number(a.ok) - Number(b.ok) || a.key.localeCompare(b.key)) }
       : null,
   };
+}
+
+export async function setResearchBackfillPaused(paused:boolean,reason:string,actor:string) {
+  if (!reason.trim()) throw Object.assign(new Error('reason is required'),{statusCode:400});
+  const before=await researchBackfillPaused();
+  await sql`INSERT INTO settings(key,value) VALUES('research.backfill.paused',${sql.json({paused,reason})}) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=now()`;
+  await audit(actor,'research.backfill.pause','research.backfill',reason,{paused:before},{paused});
+  return {paused};
 }
 
 const ARTICLE_STEPS = new Set([

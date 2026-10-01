@@ -1,6 +1,7 @@
 // First-party site API (/api/site/*). Not a public API: it may evolve with the website,
 // but it is served from the same public read layer as v1, RSS and MCP.
 import type { CategoryKey, ChannelKey } from "./taxonomy.ts";
+import type { ResearchFilters, ResearchProfile } from "./research.ts";
 
 export type SourceKind = "rss" | "web_list" | "json_list" | "x_search" | "mp_account" | "external";
 
@@ -43,6 +44,7 @@ export interface StoryRef {
 }
 
 export interface ItemSummary {
+  research?: ResearchProfile | null;
   id: string;
   revision: number;
   title: string;
@@ -64,7 +66,7 @@ export interface ItemSummary {
 }
 
 /** The fields rendered by a site feed card; full original text lives in the item detail. */
-export interface FeedItemSummary extends Pick<ItemSummary, "id" | "title" | "summary" | "reason" | "publishedAt" | "timelineAt" | "category" | "tags" | "score" | "selected" | "channel"> {
+export interface FeedItemSummary extends Pick<ItemSummary, "id" | "title" | "summary" | "reason" | "publishedAt" | "timelineAt" | "category" | "tags" | "score" | "selected" | "channel" | "research"> {
   source: Pick<SourceRef, "name">;
   x: (Pick<XPostView, "authorName" | "handle" | "avatarUrl" | "avatarSrcSet" | "media"> & {
     quoted: Omit<NonNullable<XPostView["quoted"]>, "url"> | null;
@@ -102,7 +104,7 @@ export interface HotStripEntry {
   participantCount: number;
 }
 
-export interface TimelineFilters {
+export interface TimelineFilters extends ResearchFilters {
   channel: ChannelKey;
   category: CategoryKey | null;
   tag: string | null;
@@ -121,7 +123,7 @@ export interface TimelineResponse {
 }
 
 export interface PoolResponse {
-  filters: TimelineFilters & { q: string | null; tab: "time" | "relevance" };
+  filters: TimelineFilters & { q: string | null; tab: "time" | "relevance"; sort?: "newest" | "oldest" };
   items: FeedItemSummary[];
   page: number;
   pageCount: number;
@@ -138,6 +140,8 @@ export interface OutlineEntry {
 }
 
 export interface ItemDetail extends ItemSummary {
+  researchSources?: Array<{ name:string; url:string }>;
+  canonicalId?: string | null;
   readingMode: "full" | "summary-only";
   author: string | null;
   language: string | null;

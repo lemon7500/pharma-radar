@@ -16,12 +16,12 @@ import { posterEtag, renderPoster, type Poster } from "../og/poster.ts";
 const S = SITE.subject;
 const PAGES: Record<string, OgCard> = {
   site: { kicker: SITE.name, title: SITE.tagline, subtitle: SITE.description },
-  all: { kicker: `全部${withSubject("动态")}`, title: "所有信源的最新动态，一站看完", subtitle: "按时间汇总各信源的最新动态，可按类别与标签筛选。" },
+  all: { kicker: "研究资料库", title: "从研究问题出发，寻找值得阅读的资料", subtitle: "组合研究环节、重点专题、内容形式与证据阶段，回到原文核对研究。" },
   hot: { kicker: "热点榜", title: `过去 48 小时，大家在讨论什么`, subtitle: "热度指数、趋势与组成热度的公开来源。", accent: "hot" },
   daily: { kicker: withSubject("日报"), title: `每天 8 点，一份读得完的${withSubject("日报")}`, subtitle: `前一天值得关注的${S}动态。` },
   weekly: { kicker: withSubject("周报"), title: "一周大事，一次看清", subtitle: "本周的主线、重要发布与值得回看的讨论。" },
   monthly: { kicker: withSubject("月报"), title: "一个月的变化", subtitle: "月度主线与关键事件回顾。" },
-  topics: { kicker: "主题", title: "长期追踪的方向", subtitle: "公司与机构、专题方向、内容形态。" },
+  topics: { kicker: "重点专题", title: "从中药与天然产物，到 AI 药物研发", subtitle: "持续追踪交叉研究，按药物发现、机制、制剂与药代、临床转化组织资料。" },
   leaderboard: { kicker: "AI 模型排行榜", title: "多家公开评测的共识排名", subtitle: "综合、编程、推理、知识、专业办公；缺测不补零，价格不影响排名。" },
   "codex-reset": { kicker: "Tibo 重置监控", title: "Codex 额度重置什么时候生效", subtitle: "推算的北京时间窗口、适用范围与 Tibo 原话。", accent: "amber" },
   about: { kicker: "关于", title: `关于 ${SITE.name}`, subtitle: SITE.description },
@@ -74,7 +74,7 @@ export function registerOg(app: FastifyInstance) {
       title: d.title,
       subtitle: d.summary,
       meta: `${d.source.name.replace(/（[^）]*）\s*$/, "")} · ${beijingDate(d.timelineAt)}`,
-      badge: d.selected && d.score !== null ? { value: String(Math.round(d.score)), label: "精选评分" } : null,
+      badge: null,
     }, 3600, ARTICLE_IMAGE_CACHE);
   });
 
@@ -91,7 +91,7 @@ export function registerOg(app: FastifyInstance) {
       summary: d.summary,
       source: d.source.name.replace(/（[^）]*）\s*$/, ""),
       date: beijingDate(d.timelineAt),
-      score: d.selected ? d.score : null,
+      score: null,
     };
     const tag = `"poster-${posterEtag(poster)}"`;
     reply.header("ETag", tag).header("Cache-Control", ARTICLE_IMAGE_CACHE).header("X-Accel-Expires", ARTICLE_IMAGE_ORIGIN_SECONDS);

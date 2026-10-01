@@ -17,6 +17,7 @@ import { GroupSources } from "../features/feed/ReadingGroup";
 import { StoryFollowups } from "../features/item/StoryFollowups";
 import { MediaGallery } from "../features/item/MediaGallery";
 import { QuotedPost } from "../features/item/QuotedPost";
+import { ResearchDetail } from "../features/research/ResearchDetail";
 import { IconArrowLeft, IconCopy, IconDownload, IconExternal, IconImage, IconMenu, IconShare } from "../components/icons";
 
 const PosterSheet = lazy(() => import("../features/item/PosterSheet"));
@@ -96,6 +97,11 @@ async function shareOrCopy(item: Pick<SiteItemDetail, "id" | "title">): Promise<
 }
 
 export default function ItemPage() {
+  const { item } = useLoaderData<typeof loader>();
+  return item.channel === "x" ? <LegacyItemPage /> : <ResearchDetail item={item} />;
+}
+
+function LegacyItemPage() {
   const { item } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
   const hasTranslation = item.hasTranslation;
@@ -182,7 +188,7 @@ export default function ItemPage() {
       {moreMenu}
     </div>
   );
-  const verdict = (item.selected || item.score !== null) && (
+  const verdict = item.selected && (
     <div className="flex items-center gap-2">
       {item.selected && <SelectedBadge />}
       <ScoreLabel score={item.score} />
@@ -229,7 +235,7 @@ export default function ItemPage() {
           <p className="text-[13.5px] leading-[1.8] text-ink-2">{item.reason}</p>
         </RailSection>
       ) : (
-        verdict && <RailSection title="AI 评分">{verdict}</RailSection>
+        verdict && <RailSection title="编辑精选">{verdict}</RailSection>
       )}
       {item.tags.length > 0 && (
         <RailSection title="标签">

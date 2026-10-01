@@ -13,7 +13,7 @@ export function headers() {
 }
 
 export function meta() {
-  return pageMeta({ title: "我的收藏", description: `保存在这台设备上的 ${SITE.name} 收藏。`, path: "/starred", noindex: true });
+  return pageMeta({ title: "阅读清单", description: `保存在这台设备上的 ${SITE.name} 阅读清单。`, path: "/starred", noindex: true });
 }
 
 function reportText(r: ImportReport): string {
@@ -65,10 +65,10 @@ export default function StarredPage() {
 
   const action = "text-[12.5px] text-ink-3 transition-colors hover:text-accent";
   return (
-    <div className="pb-12">
+    <div className="reading-list-page pb-12">
       <header className="flex flex-col gap-2 pb-4 pt-5 sm:flex-row sm:items-start sm:justify-between lg:pt-1">
         <div>
-          <h1 className="text-[24px] font-semibold leading-[1.3] text-ink">收藏</h1>
+          <span className="journal-kicker">YOUR READING LIST</span><h1 className="mt-3 text-[30px] font-semibold leading-[1.3] text-ink">阅读清单</h1>
           <p className="mt-1.5 text-[13px] text-ink-3">本机收藏的 {SITE.name} 内容，适合稍后阅读和回看。</p>
         </div>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 sm:pt-1.5">
@@ -100,7 +100,7 @@ export default function StarredPage() {
           <IconBookmark size={20} className="text-ink-4" />
           <p className="mt-3 text-[13px] text-ink-3">还没有收藏内容。点开任意一条内容，在详情页点击收藏即可添加。</p>
           <Link to="/" className="mt-4 text-[12.5px] font-medium text-accent hover:text-accent-ink">
-            去看精选 →
+            浏览资料库 →
           </Link>
         </div>
       ) : (

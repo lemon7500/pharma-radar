@@ -24,6 +24,9 @@ import { loadSiteCodexResetPage, loadSiteCodexResetDay } from "@aihot/backend/pu
 import { codexResetVersion } from "@aihot/backend/monitor/read";
 import { cached } from "@aihot/backend/lib/cache";
 import { looseQuery, sendJsonWithEtag, sendProblem } from "../http/respond.ts";
+import { parseResearchFilters, type ResearchFilters } from "@aihot/contracts/research";
+import { researchOverview, researchTopics, researchTopicPage } from "@aihot/backend/publication/research";
+import { RESEARCH_AREAS, type ResearchArea } from "@aihot/contracts/research";
 
 type Handler = (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>;
 
@@ -56,7 +59,7 @@ export function siteHandler(fn: Handler): Handler {
   };
 }
 
-export interface FilterParams {
+export interface FilterParams extends ResearchFilters {
   channel: ChannelKey;
   category: CategoryKey | null;
   tag: string | null;
@@ -76,10 +79,22 @@ export async function parseFilters(q: Record<string, string>): Promise<FilterPar
     topicTags = await loadTopicTags(topic);
     if (!topicTags) throw new BadRequest("unknown topic");
   }
-  return { channel, category: category as CategoryKey | null, tag, topic, topicTags };
+  return { channel, category: category as CategoryKey | null, tag, topic, topicTags, ...parseResearchFilters(new URLSearchParams(q)) };
 }
 
 export function registerSite(app: FastifyInstance) {
+  app.get("/api/site/research/overview", siteHandler(async (req, reply) => {
+    const body = await researchOverview();
+    return sendJsonWithEtag(req, reply, body, { etagPrefix:"research",cacheControl:cacheUntil(reply,60,body.refreshAt) });
+  }));
+  app.get("/api/site/research/topics", siteHandler(async (req, reply) => sendJsonWithEtag(req, reply, { topics:await researchTopics() }, { etagPrefix:"research-topics", cacheControl:"public, max-age=60, s-maxage=60" })));
+  app.get("/api/site/research/topics/:slug", siteHandler(async (req, reply) => {
+    const q = looseQuery(req);
+    const area = RESEARCH_AREAS.some(a => a.key === q.area) ? q.area as ResearchArea : undefined;
+    const data = await researchTopicPage((req.params as { slug:string }).slug, Number(q.page || 1), area);
+    if (!data) return sendProblem(req, reply, { status:404, code:"not_found", detail:"topic page not found", cacheControl:"public, max-age=60" });
+    return sendJsonWithEtag(req, reply, data, { etagPrefix:"research-topic", cacheControl:"public, max-age=60, s-maxage=60" });
+  }));
   app.get("/api/site/meta", siteHandler(async (req, reply) => {
     return sendJsonWithEtag(req, reply, siteMeta(), { etagPrefix: "meta", cacheControl: "public, max-age=60, s-maxage=60" });
   }));
@@ -106,7 +121,7 @@ export function registerSite(app: FastifyInstance) {
     const page = Math.min(Math.max(Number(q.page) || 1, 1), 50);
     const search = q.q?.trim() ? q.q.trim().slice(0, 200) : null;
     const tab = q.tab === "relevance" ? "relevance" : "time";
-    const data = await loadPool({ ...filters, q: search, tab, page });
+    const data = await loadPool({ ...filters, q: search, tab, page, sort: q.sort === "oldest" ? "oldest" : "newest" });
     const { generatedAt: _, ...content } = data;
     return sendJsonWithEtag(req, reply, data, { etagPrefix: "pool", cacheControl: "public, max-age=60, s-maxage=60", etagOf: content });
   }));

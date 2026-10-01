@@ -15,6 +15,24 @@ import { mergeStoryInto } from "../events/merge.ts";
 import { latestHotRanking } from "../events/hot-read.ts";
 import { audit } from "./auth.ts";
 import { Conflict } from "./sources.ts";
+import { normalizeBibliography, validateAdminResearch } from "../research/profile.ts";
+import { reconcileResearchDoi } from "../research/enrich.ts";
+
+async function republishResearchFamily(id:string) {
+  const relatives = await sql<{id:string}[]>`SELECT id FROM articles WHERE canonical_article_id=${id} OR id=${id}`;
+  const [record] = await sql<{doi:string|null}[]>`SELECT coalesce(o.fields->'researchBibliography',a.bibliography)->>'doi' AS doi
+    FROM articles a LEFT JOIN editorial_overrides o ON o.article_id=a.id WHERE a.id=${id}`;
+  if (!record?.doi && relatives.length < 2) return publishArticle(id);
+  await sql`UPDATE articles SET canonical_article_id=NULL WHERE id=${id}`;
+  const affected = new Set([id]);
+  for (const row of relatives) for (const alias of await reconcileResearchDoi(row.id)) affected.add(alias);
+  let published = null;
+  for (const alias of affected) {
+    const result = await publishArticle(alias);
+    if (alias === id) published = result;
+  }
+  return published;
+}
 
 export async function searchContent(q: string) {
   const term = q.trim();
@@ -35,11 +53,12 @@ export async function contentChain(id: string) {
   const [article] = await sql`
     SELECT a.id, a.source_id, a.url, a.identity_key, a.title, a.author, a.language, a.published_at, a.published_at_claim, a.discovered_at,
            a.timeline_at, a.backfill, a.body_status, a.revision, a.processing_state, a.processing_error, a.grouped_at, length(a.body_text) AS body_chars,
+           a.bibliography, a.research_profile, a.research_support, a.research_enriched_at, a.research_retry_at, a.canonical_article_id, coalesce(a.research_abstract,a.body_text,a.excerpt) AS research_material, a.research_source_url,
            s.name AS source_name, s.kind AS source_kind, s.tier, s.participation_mode, s.site_fulltext, s.syndicate_fulltext
     FROM articles a JOIN sources s ON s.id = a.source_id WHERE a.id = ${id}`;
   if (!article) return null;
   const [discoveries, revisions, analyses, publication, override, ledger, membership, decisions, deliveries, history] = await Promise.all([
-    sql`SELECT source_id, via, discovered_at FROM article_discoveries WHERE article_id = ${id} ORDER BY discovered_at`,
+    sql`SELECT source_id, via, source_url, discovered_at FROM article_discoveries WHERE article_id = ${id} ORDER BY discovered_at`,
     sql`SELECT revision, title, content_hash, created_at FROM article_revisions WHERE article_id = ${id} ORDER BY revision DESC LIMIT 10`,
     sql`
       SELECT an.id, an.origin, an.model, an.prompt_version, an.input_revision, an.relevance, an.category, an.score, an.selected, an.title_zh, an.reason_zh,
@@ -92,7 +111,7 @@ export async function setVisibility(id: string, input: { visibility: "public" | 
     WHERE editorial_overrides.version = ${input.version}
     RETURNING version`;
   if (!written.count) throw new Conflict(STALE);
-  const published = await publishArticle(id);
+  const published = await republishResearchFamily(id);
   if (published?.reduced || (before.visibility ?? "public") !== input.visibility) {
     // On the hot board the change shows at once, not at the next five-minute ranking.
     if (await inHotRanking(id)) await computeHotRanking();
@@ -123,6 +142,11 @@ const FieldsSchema = z
     tags: z.array(z.string().max(60)).max(20),
     selected: z.boolean(),
     silent: z.boolean(),
+    research: z.unknown(),
+    researchBibliography: z.object({
+      doi:z.string().nullable(), pmid:z.string().nullable(), authors:z.array(z.string().max(200)).max(50), journal:z.string().max(300).nullable(),
+      publishedDate:z.string().nullable(), publicationTypes:z.array(z.string().max(200)).max(10), isPreprint:z.boolean().nullable(),
+    }).strict(),
   })
   .partial()
   .strict();
@@ -133,15 +157,29 @@ export async function overrideFields(id: string, input: { fields: unknown; clear
   const fields = FieldsSchema.parse(input.fields ?? {});
   const before = await overrideRow(id);
   if (before.version !== input.version) throw new Conflict(STALE);
-  const next = { ...before.fields, ...fields };
+  const next: Record<string, unknown> = { ...before.fields, ...fields };
+  if (fields.researchBibliography !== undefined) {
+    const normalized = normalizeBibliography(fields.researchBibliography);
+    if (JSON.stringify(normalized) !== JSON.stringify(fields.researchBibliography)) throw Object.assign(new Error("文献元数据格式无效，请核对 DOI、日期与字段内容"), { statusCode:400 });
+    next.researchBibliography = normalized;
+  }
+  if (fields.research !== undefined) {
+    const [a] = await sql`SELECT title, coalesce(research_abstract,body_text) AS body_text, excerpt, bibliography FROM articles WHERE id = ${id}`;
+    if (!a) throw Object.assign(new Error("article not found"),{statusCode:404});
+    const result = validateAdminResearch(fields.research, { title:a.title, bodyText:a.body_text, excerpt:a.excerpt, bibliography:normalizeBibliography(next.researchBibliography ?? a.bibliography) });
+    next.research = result.profile;
+    next.researchSupport = result.support;
+  }
   for (const k of input.clear ?? []) delete (next as Record<string, unknown>)[k];
+  if (input.clear?.includes("research")) delete next.researchSupport;
   const written = await sql`
     INSERT INTO editorial_overrides (article_id, fields, reason, version, updated_by) VALUES (${id}, ${sql.json(next as never)}, ${input.reason}, 1, ${actor})
     ON CONFLICT (article_id) DO UPDATE SET fields = EXCLUDED.fields, reason = EXCLUDED.reason, version = editorial_overrides.version + 1, updated_by = EXCLUDED.updated_by, updated_at = now()
     WHERE editorial_overrides.version = ${input.version}
     RETURNING version`;
   if (!written.count) throw new Conflict(STALE);
-  const published = await publishArticle(id);
+  const published = fields.researchBibliography !== undefined || input.clear?.includes("researchBibliography")
+    ? await republishResearchFamily(id) : await publishArticle(id);
   // A corrected title or summary reaches the event summary: rewrite the digest of its story.
   if (published?.changed) {
     const [st] = await sql<{ story_id: number | null }[]>`SELECT story_id FROM publications WHERE article_id = ${id}`;
@@ -155,12 +193,16 @@ export async function overrideFields(id: string, input: { fields: unknown; clear
  * Re-runs a pipeline step for the current revision. Re-evaluation is a new paid model call bound to
  * the request id, so submitting the same request twice neither enqueues nor pays twice.
  */
-export async function rerun(id: string, step: "extract" | "analyze" | "group", requestId: string, actor: string) {
+export async function rerun(id: string, step: "extract" | "analyze" | "group" | "research", requestId: string, actor: string) {
   if (!/^[\w-]{8,80}$/.test(requestId)) throw new Error("a stable request id is required");
   const [a] = await sql`SELECT id FROM articles WHERE id = ${id}`;
   if (!a) return null;
   let jobId: string | null;
-  if (step === "group") {
+  if (step === "research") {
+    // The hourly batch performs this under the same rolling daily and provider request caps.
+    await sql`UPDATE articles SET research_enriched_at = NULL, research_retry_at = NULL WHERE id = ${id}`;
+    jobId = `research:${id}`;
+  } else if (step === "group") {
     // An explicit regroup replaces an earlier manual "keep standalone" decision and the automatic membership.
     await sql`DELETE FROM grouping_overrides WHERE article_id = ${id}`;
     jobId = await enqueue(QUEUES.group, { articleId: id, force: true }, { singletonKey: `manual:group:${id}:${requestId}` });

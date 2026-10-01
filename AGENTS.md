@@ -38,4 +38,8 @@
 
 ## 写代码
 
+## Design System
+
+Read DESIGN.md before making visual or UI decisions. It defines Pharma Radar's typography, colours, spacing, layout and research presentation. Keep the design consistent across desktop, mobile, dark mode and administration.
+
 匹配周围代码的写法、命名和注释密度。选能清楚解决问题的简单方案，只定义正在使用的抽象。验证改动涉及的重要行为，不为简单的样式改动写测试。

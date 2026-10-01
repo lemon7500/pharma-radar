@@ -4,16 +4,16 @@
 
 export const SITE = {
   /** 站名：导航、页面标题、分享图、RSS、MCP、后台都用它。 */
-  name: "药研雷达",
+  name: "Pharma Radar",
   /**
    * 行业词：拼进默认说法里，比如“AI 日报”“AI 动态”。
    * 改成“法律”“HR”“黄金”之类，页面上就会变成“法律日报”“法律动态”。
    */
   subject: "药研",
   /** 首页的完整标题（浏览器标签、搜索结果）。 */
-  homeTitle: "药研雷达 — 中药 · AI制药 · 药学动态",
+  homeTitle: "Pharma Radar — 药学研究阅读索引",
   /** 一句话介绍：搜索引擎、分享卡片、RSS、llms.txt 会用。 */
-  description: "追踪中药与天然产物、AI 药物发现和药学研究，聚合可追溯的中文摘要、主题索引与日报。",
+  description: "面向药学学生与研究者，追踪中药与天然产物、AI 药物研发和现代药学，提供有来源依据的研究导读、资料库与研究简报。",
   /** 首页左上角和侧边栏下面的一行小字。 */
   tagline: "从天然产物到 AI 制药",
   /** 界面语言（HTML lang、og:locale）。 */
@@ -33,7 +33,7 @@ export const SITE = {
   icp: null as string | null,
   /** 结构化数据里的网站运营者（搜索引擎用）。 */
   organization: {
-    name: "药研雷达",
+    name: "Pharma Radar",
     /** 创始人（选填）：{ name, url, description }。 */
     founder: { name: "Lemon" } as null | { name: string; url?: string; description?: string },
   },
@@ -47,7 +47,7 @@ export const ABOUT = {
   /** 大标题：第一行正常颜色，第二行强调色。 */
   headline: ["从草木到算法，", "追踪有证据的药物研发进展。"] as [string, string],
   /** 标题下面的一段话。{sources} 会换成实时的信源数。 */
-  lead: `${SITE.name} 替你盯着 {sources} 个信源：抓取、归并、打分、精选，定时整理研究动态和日报，免费托管的执行时间可能延迟。免费，不用注册。`,
+  lead: `${SITE.name} 面向药学学生与研究者，持续整理 {sources} 个信源的研究资料。通过中文导读发现研究、了解材料范围，再回到原文核对证据。匿名阅读，无需注册。`,
   /** 信源河动画下面的四个环节。 */
   steps: {
     collect: "跟踪公开期刊订阅和研究数据库，中药与 AI 制药关键词分开管理，初始按小时检查。",
@@ -72,7 +72,7 @@ export const ABOUT = {
 } as const;
 
 export const TOPIC_PAGE = {
-  title: "按主题看药研",
+  title: "持续追踪研究方向",
   description: "按研究方向、机构与资料类型追踪中药、天然产物、AI 制药和药学进展。",
   groups: [
     { key: "company", name: "机构与企业", blurb: "按研究机构和制药企业追踪具体进展" },

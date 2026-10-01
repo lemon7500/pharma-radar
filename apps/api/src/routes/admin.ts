@@ -10,7 +10,7 @@ import { modelsOverview, switchModel } from "@aihot/backend/admin/models";
 import { contentChain, detachFromFact, mergeStories, overrideFields, rerun, searchContent, setSeoIndexed, setVisibility } from "@aihot/backend/admin/content";
 import { banSource, eraseFeedback, feedbackScreenshot, listFeedback, unbanSource, updateFeedback } from "@aihot/backend/admin/feedback";
 import { listMonitorEvents, listMonitorPosts, relinkPost, resolveMonitorPost, reviewReceipt, setWithdrawn, updateMonitorEvent } from "@aihot/backend/admin/monitor";
-import { releaseReceipt, requeueFailedArticles, resolveDelivery, runsOverview } from "@aihot/backend/admin/runs";
+import { releaseReceipt, requeueFailedArticles, resolveDelivery, runsOverview, setResearchBackfillPaused } from "@aihot/backend/admin/runs";
 import { listBudgets, listTargets, replaceContactQr, setTargetEnabled, updateBudget } from "@aihot/backend/admin/settings";
 import { createSource, fetchNow, listSources, previewSource, sourceDetail, updateSource } from "@aihot/backend/admin/sources";
 import { sql } from "@aihot/backend/db";
@@ -33,6 +33,11 @@ function decodeImage(dataUrl: unknown): Buffer {
 }
 
 export function registerAdmin(app: FastifyInstance) {
+  app.post('/api/admin/research/backfill',adminHandler(async(req,_reply,admin)=>{
+    const b=body<{paused:boolean;reason:string}>(req);
+    if(typeof b.paused!=='boolean') throw Object.assign(new Error('paused must be boolean'),{statusCode:400});
+    return setResearchBackfillPaused(b.paused,b.reason||'',actorOf(admin));
+  }));
   // Sources (F18)
   app.get("/api/admin/sources", adminHandler(async (req) => {
     const f = q(req);
@@ -58,7 +63,8 @@ export function registerAdmin(app: FastifyInstance) {
   app.post("/api/admin/content/:id/seo", adminHandler(async (req, reply, admin) => orNotFound(req, reply, await setSeoIndexed(param(req, "id"), body(req) as never, actorOf(admin)))));
   app.post("/api/admin/content/:id/override", adminHandler(async (req, _reply, admin) => overrideFields(param(req, "id"), body(req) as never, actorOf(admin))));
   app.post("/api/admin/content/:id/rerun", adminHandler(async (req, reply, admin) => {
-    const b = body<{ step: "extract" | "analyze" | "group" }>(req);
+    const b = body<{ step: "extract" | "analyze" | "group" | "research" }>(req);
+    if (!["extract","analyze","group","research"].includes(b.step)) throw Object.assign(new Error("invalid pipeline step"),{statusCode:400});
     const requestId = String(req.headers["idempotency-key"] ?? "");
     return orNotFound(req, reply, await rerun(param(req, "id"), b.step, requestId, actorOf(admin)));
   }));

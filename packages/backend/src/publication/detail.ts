@@ -10,6 +10,7 @@ import { hasItemPage } from "./rules.ts";
 import { SITE } from "@aihot/industry/site";
 
 interface DetailRow extends ItemRow {
+  canonical_article_id:string|null;
   body_html: string | null;
   body_text: string | null;
   body_status: string;
@@ -37,7 +38,7 @@ function withOutline(html: string): { html: string; outline: OutlineEntry[] } {
 
 async function loadRow(id: string): Promise<DetailRow | null> {
   const [row] = await sql<DetailRow[]>`
-    SELECT ${ITEM_COLUMNS}, a.body_html, a.body_text, a.body_status, tr.body_html AS tr_html, tr.complete AS tr_complete
+    SELECT ${ITEM_COLUMNS}, a.canonical_article_id, a.body_html, a.body_text, a.body_status, tr.body_html AS tr_html, tr.complete AS tr_complete
     ${ITEM_FROM}
     WHERE p.article_id = ${id}`;
   return row ?? null;
@@ -57,6 +58,7 @@ export async function loadItemDetail(id: string, now = new Date()): Promise<Deta
     const detail: ItemDetail = {
       ...summary,
       reason: null,
+      research: null,
       tags: [],
       x: null,
       readingMode: "summary-only",
@@ -127,6 +129,10 @@ export async function loadItemDetail(id: string, now = new Date()): Promise<Deta
 
   const detail: ItemDetail = {
     ...summary,
+    canonicalId:row.canonical_article_id,
+    researchSources:(await sql<{name:string;url:string}[]>`SELECT DISTINCT s.name,coalesce(d.source_url,a.url) AS url
+      FROM article_discoveries d JOIN sources s ON s.id=d.source_id JOIN articles a ON a.id=d.article_id
+      WHERE d.article_id=${row.canonical_article_id || id} AND s.participation_mode='editorial' ORDER BY s.name`).filter(v=>/^https?:\/\//i.test(v.url)),
     readingMode: "full",
     author: row.author,
     language: row.language,

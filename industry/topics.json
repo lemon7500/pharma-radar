@@ -1,6 +1,14 @@
 {
   "topics": [
     {
+      "slug": "tcm-natural-products",
+      "name": "中药与天然产物",
+      "tags": ["中药", "天然产物", "方剂", "药用植物"],
+      "definition": "持续追踪中药、方剂、药用植物与天然活性成分，从药物发现到机制验证和临床转化。",
+      "group": "field",
+      "related": ["tcm", "natural-products", "ai-pharma"]
+    },
+    {
       "slug": "tcm",
       "name": "中药与方剂",
       "tags": [
@@ -24,7 +32,7 @@
     },
     {
       "slug": "ai-pharma",
-      "name": "AI 药物发现",
+      "name": "AI 药物研发",
       "tags": [
         "AI制药"
       ],

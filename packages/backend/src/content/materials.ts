@@ -4,6 +4,8 @@ import { sql, type Db } from "../db.ts";
 import { newArticleId, sha256 } from "../lib/ids.ts";
 import { identityKeyForUrl } from "../lib/url.ts";
 import { collapseWhitespace } from "../lib/text.ts";
+import type { Bibliography } from "@aihot/contracts/research";
+import { normalizeBibliography, bibliographyPresent } from "../research/profile.ts";
 
 export interface MediaItem {
   kind: "image" | "video";
@@ -27,6 +29,7 @@ export interface XPostData {
 }
 
 export interface MaterialInput {
+  bibliography?: Bibliography | null;
   sourceId: string;
   url: string;
   title: string;
@@ -130,7 +133,16 @@ export async function upsertMaterial(m: MaterialInput, db: Db = sql): Promise<Ma
 }
 
 async function upsertIn(db: Db, m: MaterialInput): Promise<MaterialResult> {
-  const identityKey = identityKeyFor(m);
+  let identityKey = identityKeyFor(m);
+  const bibliography = normalizeBibliography(m.bibliography);
+  const hasBibliography = bibliographyPresent(bibliography);
+  if (bibliography.doi) {
+    await db`SELECT pg_advisory_xact_lock(hashtext(${'research-doi:' + bibliography.doi}))`;
+    const [same] = await db<{ identity_key: string }[]>`SELECT identity_key FROM articles
+      WHERE identity_key = ${identityKey} OR bibliography->>'doi' = ${bibliography.doi}
+      ORDER BY discovered_at, id LIMIT 1`;
+    identityKey = same?.identity_key ?? `doi:${bibliography.doi}`;
+  }
   const discoveredAt = m.discoveredAt ?? new Date();
   const title = collapseWhitespace(m.title).slice(0, 1000) || m.url;
 
@@ -140,25 +152,27 @@ async function upsertIn(db: Db, m: MaterialInput): Promise<MaterialResult> {
   const [inserted] = await db<{ id: string }[]>`
     INSERT INTO articles (id, source_id, identity_key, url, title, author, language, published_at, published_at_claim,
       discovered_at, source_updated_at, timeline_at, backfill, backfill_reason, revision, content_hash, excerpt,
-      body_text, body_html, body_status, media, x_post, raw)
+      body_text, body_html, body_status, media, x_post, raw, bibliography)
     VALUES (${newId}, ${m.sourceId}, ${identityKey}, ${m.url}, ${title}, ${m.author ?? null}, ${m.language ?? null},
       ${t.publishedAt}, ${m.publishedAt ?? null}, ${discoveredAt}, ${m.sourceUpdatedAt ?? null}, ${t.timelineAt},
       ${t.backfill}, ${t.backfillReason}, 1, ${hash}, ${m.excerpt ?? null}, ${m.bodyText ?? null}, ${m.bodyHtml ?? null},
       ${m.bodyStatus ?? (m.bodyText ? "ok" : "pending")}, ${db.json((m.media ?? []) as never)},
-      ${m.xPost ? db.json(m.xPost as never) : null}, ${m.raw === undefined ? null : db.json(m.raw as never)})
+      ${m.xPost ? db.json(m.xPost as never) : null}, ${m.raw === undefined ? null : db.json(m.raw as never)}, ${hasBibliography ? db.json(bibliography as never) : null})
     ON CONFLICT (identity_key) DO NOTHING RETURNING id`;
   if (inserted) {
     await db`INSERT INTO article_revisions (article_id, revision, content_hash, title, body_text)
              VALUES (${newId}, 1, ${hash}, ${title}, ${m.bodyText ?? null})`;
-    await db`INSERT INTO article_discoveries (article_id, source_id, via, discovered_at)
-             VALUES (${newId}, ${m.sourceId}, ${m.via}, ${discoveredAt}) ON CONFLICT DO NOTHING`;
+    await db`INSERT INTO article_discoveries (article_id, source_id, via, discovered_at, source_url)
+             VALUES (${newId}, ${m.sourceId}, ${m.via}, ${discoveredAt}, ${m.url}) ON CONFLICT DO NOTHING`;
     return { articleId: newId, created: true, revised: false, backfill: t.backfill };
   }
 
   const [existing] = await db<{ id: string; source_id: string; revision: number; content_hash: string | null; backfill: boolean; title: string; body_text: string | null; excerpt: string | null }[]>`
     SELECT id, source_id, revision, content_hash, backfill, title, body_text, excerpt FROM articles WHERE identity_key = ${identityKey} FOR UPDATE`;
-  await db`INSERT INTO article_discoveries (article_id, source_id, via, discovered_at)
-           VALUES (${existing!.id}, ${m.sourceId}, ${m.via}, ${discoveredAt}) ON CONFLICT DO NOTHING`;
+  await db`INSERT INTO article_discoveries (article_id, source_id, via, discovered_at, source_url)
+           VALUES (${existing!.id}, ${m.sourceId}, ${m.via}, ${discoveredAt}, ${m.url}) ON CONFLICT (article_id, source_id, via) DO UPDATE SET source_url = coalesce(article_discoveries.source_url, EXCLUDED.source_url)`;
+  if (hasBibliography) await db`UPDATE articles SET bibliography = ${db.json(bibliography as never)}, research_enriched_at = NULL
+    WHERE id = ${existing!.id} AND bibliography IS DISTINCT FROM ${db.json(bibliography as never)}`;
   const unchanged: MaterialResult = { articleId: existing!.id, created: false, revised: false, backfill: existing!.backfill };
   // Another source listing the same material (an aggregator, a translated mirror, a hot signal) is a
   // discovery only: its title and summary are its own rendering, and taking them made the article flip
@@ -196,7 +210,8 @@ async function upsertIn(db: Db, m: MaterialInput): Promise<MaterialResult> {
       body_status = CASE WHEN ${m.bodyText ?? null}::text IS NULL THEN body_status ELSE ${m.bodyStatus ?? "ok"} END,
       media = CASE WHEN ${m.media ? db.json(m.media as never) : null}::jsonb IS NULL THEN media ELSE ${m.media ? db.json(m.media as never) : null}::jsonb END,
       x_post = coalesce(${m.xPost ? db.json(m.xPost as never) : null}, x_post),
-      revision = revision + 1, content_hash = ${next}, processing_state = 'new', updated_at = now()
+      revision = revision + 1, content_hash = ${next}, processing_state = 'new', updated_at = now(),
+      research_abstract = NULL, research_source_url = NULL, research_enriched_at = NULL
     WHERE id = ${existing!.id}
     RETURNING revision`;
   await db`INSERT INTO article_revisions (article_id, revision, content_hash, title, body_text)
