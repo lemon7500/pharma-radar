@@ -26,7 +26,7 @@ export const SITE = {
    */
   mcpPrefix: "pharma_radar",
   /** 对外联系邮箱（选填）：使用规则、llms.txt、响应头里会写。 */
-  contactEmail: null as string | null,
+  contactEmail: "Lemon7500@163.com" as string | null,
   /** 页脚的一行小字（选填）。 */
   footerNote: "研究动态与阅读索引 · 重要结论请核对原文",
   /** 中国大陆网站的 ICP 备案号（选填），填了就显示在页脚并链接到工信部备案系统。 */
@@ -35,7 +35,7 @@ export const SITE = {
   organization: {
     name: "药研雷达",
     /** 创始人（选填）：{ name, url, description }。 */
-    founder: null as null | { name: string; url?: string; description?: string },
+    founder: { name: "Lemon" } as null | { name: string; url?: string; description?: string },
   },
   /** 抓取信源时报上的名字（User-Agent 里用），不要冒用别的站。 */
   crawlerName: "PharmaRadarBot",

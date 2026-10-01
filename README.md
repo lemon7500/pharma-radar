@@ -34,6 +34,6 @@ node --env-file=.env deploy/start-web.mjs
 
 测试入口为 `npm run typecheck`、`npm test`、`node --test apps/web/tests/*.test.ts` 和 `node scripts/smoke.ts --base http://localhost:3000`。模型测试仅连接本地 HTTP 桩；POSIX 信号测试由 Linux CI 执行。
 
-正式上线前需要运营者确认 [使用规则](industry/pages/terms.md) 和 [隐私说明](industry/pages/privacy.md)。现有文件是拟定版。
+[使用规则](industry/pages/terms.md) 和 [隐私说明](industry/pages/privacy.md) 已经运营者 Lemon 确认，随站点正式开放生效。
 
 上游说明保存在 [README.upstream.md](README.upstream.md)，软件许可见 [LICENSE](LICENSE)。资讯原文的版权与许可属于各来源。
