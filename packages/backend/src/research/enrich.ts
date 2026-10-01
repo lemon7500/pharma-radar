@@ -4,7 +4,7 @@ import { guardedFetch } from "../lib/http-fetch.ts";
 import { stripTags, collapseWhitespace } from "../lib/text.ts";
 import { normalizeDoi, normalizeBibliography, europePmcBibliography, materialBasis } from "./profile.ts";
 import type { Bibliography } from "@aihot/contracts/research";
-const titleKey = (s: string) => collapseWhitespace(stripTags(s)).toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+export const researchTitleKey = (s: string) => collapseWhitespace(stripTags(stripTags(s))).toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
 /** Fetches a free source record inside collection jobs only. Never called from a public request. */
 export async function enrichResearchMaterial(articleId: string): Promise<void> {
   const [a] = await sql<{ url: string; title: string; body_text: string | null; excerpt: string | null; bibliography: Bibliography | null; revision: number; kind: string }[]>`
@@ -33,10 +33,10 @@ export async function enrichResearchMaterial(articleId: string): Promise<void> {
   if (res.status !== 200) throw new Error(`bibliography lookup HTTP ${res.status}`);
   const data = JSON.parse(res.text());
   const matches: Record<string, any>[] = Array.isArray(data.resultList?.result) ? data.resultList.result : [];
-  const match = matches.find(r => doi ? normalizeDoi(r.doi) === doi : pmid ? String(r.pmid || r.id) === pmid : titleKey(String(r.title || "")) === titleKey(a.title));
-  if (!match || titleKey(String(match.title || "")) !== titleKey(a.title)) return;
+  const match = matches.find(r => doi ? normalizeDoi(r.doi) === doi : pmid ? String(r.pmid || r.id) === pmid : researchTitleKey(String(r.title || "")) === researchTitleKey(a.title));
+  if (!match || researchTitleKey(String(match.title || "")) !== researchTitleKey(a.title)) return;
   const bibliography = europePmcBibliography(match);
-  const abstract = typeof match.abstractText === "string" ? stripTags(match.abstractText).trim().slice(0, 30_000) : null;
+  const abstract = typeof match.abstractText === "string" ? stripTags(stripTags(match.abstractText)).trim().slice(0, 30_000) : null;
   const useful = abstract && abstract.length >= 100;
   // The verified source abstract is additive: historical bodies, translations and selection stay intact.
   // The research extraction has its own source-support record and receipt; publication hashes include it.

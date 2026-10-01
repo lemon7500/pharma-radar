@@ -38,7 +38,7 @@ export async function backfillResearch(options: { limit?: number; deadline?: num
       let profile = baselineResearch(input), support = {}, receiptId: number | null = null;
       if (profile.status !== "insufficient" && process.env.MODEL_CALLS_ENABLED === "true") {
         const res = await chatJson({ model: await modelFor("structure"), purpose: "research_backfill", subject: `article:${row.id}@${input.revision}`,
-          promptVersion: promptVersion("research-profile"), system: `${promptText("safety")}\n${promptText("rules-pharma")}\n${promptText("research-profile")}\n只返回 {"research":研究结构对象}。`,
+          promptVersion: promptVersion("research-profile"), system: `${promptText("safety")}\n${promptText("rules-pharma")}\n${promptText("research-profile")}\n只返回 JSON 对象 {"research":研究结构对象}。`,
           user: buildMaterial(input), schema: z.object({ research: z.object({ areas:z.array(z.unknown()).max(8),foci:z.array(z.unknown()).max(8),evidenceStages:z.array(z.unknown()).max(8),claims:z.record(z.string(),z.unknown()) }).passthrough() }), temperature: 0.1, maxTokens: 3600,
         });
         ({ profile, support } = validateResearchExtraction(res.data.research, input));
@@ -58,6 +58,8 @@ export async function backfillResearch(options: { limit?: number; deadline?: num
     } catch (error) {
       // Keep the published paper readable. Provider details/URLs stay in private receipts.
       await sql`UPDATE articles SET research_retry_at = now() + interval '24 hours' WHERE id = ${row.id}`;
+      // Trusted bibliography fetched before a model failure is still useful to readers.
+      await publishArticle(row.id);
       failed++;
       if (error instanceof BudgetExceededError) break;
       consecutiveFailures++;

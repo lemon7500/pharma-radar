@@ -1,5 +1,5 @@
 【Pharma Radar 研究结构】
-同时返回 research 对象。各维度独立，同一论文可归属多个环节、专题和证据阶段。
+返回 JSON 格式的 research 对象。各维度独立，同一论文可归属多个环节、专题和证据阶段。
 每个判断都附 quote：从当前材料逐字复制的原文片段（12–500字符），不得改写、翻译或拼接 quote。材料没有依据时给 null 或 []，不利用外部知识补齐。
 areas: discovery（药物发现）、mechanisms（药理机制）、formulation-pk（制剂与药代）、translation（临床转化）。
 foci: tcm-natural-products（中药与天然产物）、ai-pharma（AI药物研发）。

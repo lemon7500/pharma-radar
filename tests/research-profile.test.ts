@@ -5,8 +5,15 @@ import {baselineResearch,europePmcBibliography,normalizeDoi,materialBasis,valida
 import {parseResearchFilters} from '@aihot/contracts/research';
 import {researchSection} from '@aihot/backend/reports/compose';
 import {researchPauseReason} from '@aihot/backend/research/backfill';
+import {researchTitleKey} from '@aihot/backend/research/enrich';
+import {promptText} from '@aihot/backend/editorial/prompts';
 const abstract = 'We used machine learning and virtual screening to identify natural products. The compounds were tested in vitro using cultured cells. Activity was reduced by 25 percent. The study does not establish clinical efficacy.';
 const material = {title:'Machine learning for natural product drug discovery',bodyText:abstract};
+test('source titles match encoded italics and research prompts satisfy JSON-mode providers',()=>{
+ assert.equal(researchTitleKey('Therapies for &lt;i&gt;Candida auris&lt;/i&gt;.'),researchTitleKey('Therapies for <i>Candida auris</i>.'));
+ assert.notEqual(researchTitleKey('Therapies for Candida auris'),researchTitleKey('Therapies for Candida albicans'));
+ assert.match(promptText('research-profile'),/json/i);
+});
 test('legacy enrichment pauses near the free capacity limit or after repeated failures',()=>{
  assert.equal(researchPauseReason(399_999_999,2),false);
  assert.equal(researchPauseReason(400_000_000,0),true);
