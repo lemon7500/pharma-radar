@@ -1,6 +1,6 @@
 # 药研雷达：免费部署方案
 
-站名：药研雷达；项目和仓库标识：`pharma-radar`。面向中药与天然产物、AI 药物发现、药理和制剂、临床及监管动态。代码已发布到 [lemon7500/pharma-radar](https://github.com/lemon7500/pharma-radar)；Render、Supabase 和模型服务仍待账号连接，公开站点尚未上线。
+站名：药研雷达；项目和仓库标识：`pharma-radar`。面向中药与天然产物、AI 药物发现、药理和制剂、临床及监管动态。代码已发布到 [lemon7500/pharma-radar](https://github.com/lemon7500/pharma-radar)。Supabase 免费项目已创建，数据库迁移、种子配置、私有存储和匿名访问限制已验证；DeepSeek 连接及 GitHub Secrets 已配置，Render 部署进行中，公开站点尚未上线。
 
 ## 资源组合
 
@@ -30,7 +30,7 @@ flowchart LR
 
 网页访问不会调用模型。定时任务每小时第 17 分钟触发，最多处理 20 分钟，任务队列和调用回执保存在数据库中，下次继续。初始信源每 3 小时检查一次；第一轮每个来源最多回补 3 篇，避免首次拉取历史资料产生大量模型调用。每日汇总仍使用原框架的北京时间逻辑，但依赖下一次 Actions 实际启动；有延迟时补齐。全文展示关闭，仅提供中文摘要和原文链接。
 
-数据库通过 Supabase **session pooler 的 5432 端口**连接，适配 IPv4；不使用 6543 transaction pooler，因为项目用到了预处理语句等会话行为。见[官方连接说明](https://supabase.com/docs/guides/database/connecting-to-postgres)。最终必须实际验证该项目的 pooler 地址、迁移和 pg-boss。Supabase 建议选靠近 Render 的区域，默认先尝试新加坡。
+数据库通过 Supabase **session pooler 的 5432 端口**连接，适配 IPv4；不使用 6543 transaction pooler，因为项目用到了预处理语句等会话行为。见[官方连接说明](https://supabase.com/docs/guides/database/connecting-to-postgres)。专用项目位于新加坡，PostgreSQL 17.11；真实连接、迁移和 pg-boss 已验证。连接串使用 `sslmode=verify-full`；Render 与 Actions 用 `NODE_EXTRA_CA_CERTS=deploy/supabase-ca.crt` 信任官方 CA，备份客户端另外配置 `PGSSLROOTCERT`。本地运行也需在启动 Node 前设置该 CA 环境变量。[官方 SSL 说明](https://supabase.com/docs/guides/platform/ssl-enforcement)及[证书下载](https://supabase-downloads.s3-ap-southeast-1.amazonaws.com/prod/ssl/prod-ca-2021.crt)。
 
 ## 内容与关键词
 
@@ -74,4 +74,4 @@ Supabase 使用一个**新建的专用项目**，迁移启用 public 表的 RLS 
 5. 核对实际公开条款和隐私内容，填写运营者显示称呼与联系邮箱；保留源码许可证和上游归属；确认后开放最终站点。
 6. 首次备份和解密恢复验证；交付站点地址、后台入口、仓库和修改关键词的位置。
 
-不必提供域名或额外服务器，先使用 `*.onrender.com`。不要在聊天里粘贴 GitHub/Render/Supabase 密码；优先官方授权。用户目前已确定站名、公开仓库和免费方案，剩余必要输入是账号授权、模型连接资料，以及本人确认公开条款/隐私与联系方式。
+不必提供域名或额外服务器，先使用 `*.onrender.com`。不要在聊天里粘贴 GitHub/Render/Supabase 密码；优先官方授权。运营者已确认为 Lemon，公开联系邮箱 Lemon7500@163.com；公开条款与隐私内容已获运营者确认。模型使用 DeepSeek 的 `deepseek-flash`，关闭 thinking；实际密钥保存在忽略的私密配置和云端 Secrets 中。

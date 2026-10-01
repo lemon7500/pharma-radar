@@ -12,6 +12,8 @@ services:
         value: 24.13.0
       - key: NODE_ENV
         value: production
+      - key: NODE_EXTRA_CA_CERTS
+        value: deploy/supabase-ca.crt
       - key: DATABASE_POOL_MAX
         value: "3"
       - key: TRUST_PROXY
