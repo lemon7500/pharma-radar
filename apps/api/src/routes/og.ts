@@ -70,7 +70,7 @@ export function registerOg(app: FastifyInstance) {
     if (!d) return notFound(reply);
     reply.header("X-Accel-Expires", ARTICLE_IMAGE_ORIGIN_SECONDS);
     return send(req, reply, {
-      kicker: d.category ? CATEGORY_LABELS[d.category] : withSubject("动态"),
+      kicker: d.researchKicker || (d.category ? CATEGORY_LABELS[d.category] : withSubject("动态")),
       title: d.title,
       subtitle: d.summary,
       meta: `${d.source.name.replace(/（[^）]*）\s*$/, "")} · ${beijingDate(d.timelineAt)}`,
@@ -86,7 +86,7 @@ export function registerOg(app: FastifyInstance) {
     if (!d) return notFound(reply);
     const poster: Poster = {
       url: `${config.siteUrl}/items/${d.id}`,
-      kicker: d.category ? CATEGORY_LABELS[d.category] : withSubject("动态"),
+      kicker: d.researchKicker || (d.category ? CATEGORY_LABELS[d.category] : withSubject("动态")),
       title: d.title,
       summary: d.summary,
       source: d.source.name.replace(/（[^）]*）\s*$/, ""),

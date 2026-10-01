@@ -6,7 +6,8 @@ import {upsertMaterial} from '@aihot/backend/content/materials';
 import {normalizeBibliography,validateResearchExtraction} from '@aihot/backend/research/profile';
 import {publishArticle} from '@aihot/backend/publication/publish';
 import {loadPool} from '@aihot/backend/publication/pool';
-import {loadItemDetail} from '@aihot/backend/publication/detail';
+import {loadItemDetail,exportMarkdown} from '@aihot/backend/publication/detail';
+import {loadItemShare} from '@aihot/backend/publication/og';
 import {overrideFields,rerun,setVisibility} from '@aihot/backend/admin/content';
 import {reconcileResearchDoi} from '@aihot/backend/research/enrich';
 import {claimResearchBackfill,backfillResearch} from '@aihot/backend/research/backfill';
@@ -47,6 +48,17 @@ test('own DOI deduplicates across sources and keeps discoveries; existing aliase
  await setVisibility(representative!.article_id,{visibility:'withdrawn',version:0,reason:'撤回来源测试'},'test-editor');
  const [remaining]=await sql`SELECT article_id FROM publications WHERE article_id=ANY(${affected}) AND eligible AND visibility='public'`;
  assert.ok(remaining);assert.notEqual(remaining!.article_id,representative!.article_id);
+});
+test('share images and exported reading notes hide unverified legacy claims and retain supported research',async()=>{
+ const id=await record(7);
+ const note=await exportMarkdown(id);assert.ok(note);assert.match(note.body,/核心结果[\s\S]*活性降低25%/);assert.match(note.body,/DOI：10\.1234/);assert.match(note.body,/研究局限[\s\S]*未提供足够依据/);
+ assert.ok(!note.body.includes('quote'));
+ const share=await loadItemShare(id);assert.equal(share!.summary,'活性降低25%。');assert.equal(share!.researchKicker,'研究资料');
+ await sql`UPDATE articles SET body_text='References: 10.1234/a 10.1234/b 10.1234/c',revision=revision+1 WHERE id=${id}`;
+ await sql`UPDATE analyses SET summary_zh='未经证实的临床疗效',category='clinical' WHERE article_id=${id}`;
+ await publishArticle(id);
+ const pendingShare=await loadItemShare(id);assert.match(pendingShare!.summary!,/待确认/);assert.ok(!pendingShare!.summary!.includes('临床疗效'));assert.equal(pendingShare!.researchKicker,'研究资料');
+ const pendingNote=await exportMarkdown(id);assert.ok(pendingNote);assert.match(pendingNote.body,/暂不生成深入导读/);assert.ok(!pendingNote.body.includes('活性降低25')&&!pendingNote.body.includes('未经证实的临床疗效'));
 });
 test('admin rejects unsupported research, audits verified corrections and preserves them on republish',async()=>{
  const id=await record(5);

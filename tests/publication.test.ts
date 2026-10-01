@@ -4,6 +4,7 @@
 // waiting behind an unreleased item leaves new snapshots at once, and snapshots answer conditional requests.
 import { config } from "@aihot/backend/config";
 import { CATEGORY_LABELS } from "@aihot/contracts/taxonomy";
+import { BASIS_LABELS, DOCUMENT_TYPES, type ResearchProfile } from "@aihot/contracts/research";
 import { beijingDate } from "@aihot/contracts/time";
 import { ogEtag } from "../apps/api/src/og/render.ts";
 import { posterEtag } from "../apps/api/src/og/poster.ts";
@@ -319,12 +320,14 @@ test("share images keep detail metadata and access rules while conditional reads
   const id = await article();
   await publishArticle(id, released());
   const d = JSON.parse((await get(`/api/site/items/${id}`)).body);
-  const kicker = d.category ? CATEGORY_LABELS[d.category as keyof typeof CATEGORY_LABELS] : "AI 动态";
+  const r = d.research as ResearchProfile | null;
+  const kicker = r ? DOCUMENT_TYPES.find(v => v.key === r.documentType)?.label || "研究资料" : d.category ? CATEGORY_LABELS[d.category as keyof typeof CATEGORY_LABELS] : "AI 动态";
+  const summary = r && r.status !== "ready" ? `${BASIS_LABELS[r.basis]}，研究方法、结果与证据阶段待确认。` : d.summary;
   const source = d.source.name.replace(/（[^）]*）\s*$/, "");
   const date = beijingDate(d.timelineAt);
-  const card = { kicker, title: d.title, subtitle: d.summary, meta: `${source} · ${date}`,
+  const card = { kicker, title: d.title, subtitle: summary, meta: `${source} · ${date}`,
     badge: null };
-  const poster = { url: `${config.siteUrl}/items/${id}`, kicker, title: d.title, summary: d.summary, source, date, score: null };
+  const poster = { url: `${config.siteUrl}/items/${id}`, kicker, title: d.title, summary, source, date, score: null };
   const paths = [[`/og/items/${id}.png`, `"og-${ogEtag(card)}"`], [`/og/posters/${id}.png`, `"poster-${posterEtag(poster)}"`]];
   const queries: string[] = [];
   const previous = sql.options.debug;

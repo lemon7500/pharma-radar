@@ -14,7 +14,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   const overview = await loadOr404<Overview>("/api/site/research/overview", { signal: request.signal,responseHeaders:upstream });
   return withHeaders(overview,{headers:releaseBoundCache(overview.refreshAt,60,Date.now(),upstream)});
 }
-export function meta() { return pageMeta({ title: SITE.homeTitle, path: "/", jsonLd: organizationLd() }); }
+export function meta() { return pageMeta({ title: SITE.homeTitle, rawTitle: true, path: "/", jsonLd: organizationLd() }); }
 export function headers({loaderHeaders}:Route.HeadersArgs) { return loaderHeaders; }
 export default function Home() {
   const data = useLoaderData<typeof loader>();

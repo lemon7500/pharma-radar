@@ -27,6 +27,7 @@ jobs:
       LLM_EXTRA_JSON: ${{ vars.LLM_EXTRA_JSON }}
       COLLECT_ENABLED: 'true'
       MODEL_CALLS_ENABLED: ${{ vars.MODEL_CALLS_ENABLED }}
+      JINA_BODY_FALLBACK: 'false'
       FEISHU_INTERNAL_ENABLED: 'false'
       FEISHU_CONTENT_PUSH_ENABLED: 'false'
       INDEXNOW_SUBMIT_ENABLED: 'false'

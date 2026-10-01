@@ -8,6 +8,7 @@ import { ITEM_COLUMNS, ITEM_FROM, selectedCondition, toItemSummary, xView, type 
 import { itemUrl } from "./links.ts";
 import { hasItemPage } from "./rules.ts";
 import { SITE } from "@aihot/industry/site";
+import { BASIS_LABELS, RESEARCH_CLAIMS, RESEARCH_AREAS, RESEARCH_FOCI, DOCUMENT_TYPES, EVIDENCE_STAGES, SOURCE_ORIGINS } from "@aihot/contracts/research";
 
 interface DetailRow extends ItemRow {
   canonical_article_id:string|null;
@@ -169,8 +170,23 @@ export async function exportMarkdown(id: string): Promise<{ filename: string; bo
   lines.push(`- 发布时间：${(row.published_at ?? row.discovered_at).toISOString()}`);
   lines.push(`- ${SITE.name}：${itemUrl(row.id)}`);
   lines.push(`- 原文：${row.url}`, "");
-  if (row.summary) lines.push("## 摘要", "", row.summary, "");
-  if (row.selected && row.reason) lines.push("## 推荐理由", "", row.reason, "");
+  if (row.research && row.channel !== "x") {
+    const r = row.research, b = r.bibliography;
+    lines.push("## 文献信息", "", `- 作者：${b.authors.join("；") || "待确认"}`, `- 期刊：${b.journal || row.source_name}`,
+      `- DOI：${b.doi || "待确认"}`, `- 发表日期：${b.publishedDate || "待确认"}`,
+      `- 文献类型：${DOCUMENT_TYPES.find(v => v.key === r.documentType)?.label || "待确认"}`,
+      `- 来源属性：${SOURCE_ORIGINS.find(v => v.key === r.origin)?.label || "待确认"}`,
+      `- 研究环节：${RESEARCH_AREAS.filter(v => r.areas.includes(v.key)).map(v => v.label).join("／") || "待确认"}`,
+      `- 重点专题：${RESEARCH_FOCI.filter(v => r.foci.includes(v.key)).map(v => v.label).join("／") || "待确认"}`,
+      `- 证据阶段：${EVIDENCE_STAGES.filter(v => r.evidenceStages.includes(v.key)).map(v => v.label).join("／") || "待确认"}`, "",
+      "## 材料范围", "", BASIS_LABELS[r.basis], "",
+      r.status === "ready" ? "根据已获取材料整理，请核对来源原文。" : "材料不足或研究结构待整理，暂不生成深入导读。", "");
+    if (r.status === "ready" && row.summary) lines.push("## 阅读概要", "", row.summary, "");
+    for (const c of RESEARCH_CLAIMS) lines.push(`## ${c.label}`, "", r.status === "ready" && r.claims[c.key] || "已获取材料未提供足够依据。", "");
+  } else {
+    if (row.summary) lines.push("## 摘要", "", row.summary, "");
+    if (row.selected && row.reason) lines.push("## 推荐理由", "", row.reason, "");
+  }
   if (row.channel === "x" && row.x_post?.text) {
     lines.push("## 正文", "", String(row.x_post.text), "");
     if (row.zh_text) lines.push("## 中文译文", "", row.zh_text, "");
