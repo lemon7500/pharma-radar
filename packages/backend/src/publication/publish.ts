@@ -192,7 +192,8 @@ export async function publishArticleTx(tx: Tx, articleId: string, options: Publi
   const structuredSummary = research.status === "ready" ? [research.claims.results ?? research.claims.question, research.claims.limitations].filter(Boolean).join(" ") : null;
   const summary = pickString(f.summary, structuredSummary || analysis?.summary_zh || null);
   const category = pickString(f.category, analysis?.category ?? null);
-  const tags = Array.isArray(f.tags) ? (f.tags as string[]) : [...new Set([...(analysis?.tags ?? []), ...(analysis?.subjects ?? []).map((s) => `entity:${s}`)])];
+  const candidateTags = Array.isArray(f.tags) ? (f.tags as string[]) : [...new Set([...(analysis?.tags ?? []), ...(analysis?.subjects ?? []).map((s) => `entity:${s}`)])];
+  const tags = candidateTags.filter(tag => tag !== "临床试验" || research.evidenceStages.includes("clinical"));
   const score = typeof f.score === "number" ? f.score : analysis?.score ?? null;
   const relevance = typeof f.relevance === "string" ? (f.relevance as string) : analysis?.relevance ?? null;
   const judgedSelected = typeof f.selected === "boolean" ? (f.selected as boolean) : analysis?.selected ?? null;
