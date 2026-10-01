@@ -10,9 +10,9 @@ import { closeDb, sql } from "@aihot/backend/db";
 import { chatJson, ModelOutputError } from "@aihot/backend/providers/llm";
 import { embeddingsAvailable } from "@aihot/backend/providers/embeddings";
 import { BudgetExceededError, paidRequest, ReceiptUnknownError } from "@aihot/backend/providers/receipts";
-import { autoReleaseUnknownReceipts, releaseReceipt } from "@aihot/backend/admin/runs";
+import { autoReleaseUnknownReceipts, releaseReceipt, runsOverview } from "@aihot/backend/admin/runs";
 import { upsertMaterial } from "@aihot/backend/content/materials";
-import { stopBoss } from "@aihot/backend/jobs/queue";
+import { stopBoss, getBoss } from "@aihot/backend/jobs/queue";
 
 const usage = { prompt_tokens: 80, completion_tokens: 20, total_tokens: 100 };
 let answer: (hit: number) => string = () => '{"ok":true}';
@@ -60,6 +60,15 @@ test("a missing outer brace is recovered and reused only after a normal provider
     finishReason='stop';assert.equal((await ask(subject)).data.ok,true);assert.equal((await ask(subject)).reused,true);assert.equal(provider.hits()-before,1);
     finishReason='length';await assert.rejects(ask(`truncated-${tag()}`),ModelOutputError);assert.equal(provider.hits()-before,2);
   }finally{finishReason=undefined;}
+});
+
+test("research monitoring counts paid retries and keeps an unreported bill unknown", async () => {
+  await getBoss();
+  const before=await runsOverview(),subject=`research-usage-${tag()}`;
+  const request=()=>chatJson({model:'deepseek-flash',purpose:'research_backfill',subject,promptVersion:'usage-test',system:'Return JSON',user:subject,schema:z.object({ok:z.boolean()})});
+  answer=()=>"not JSON";
+  await assert.rejects(request(),ModelOutputError);await assert.rejects(request(),ModelOutputError);
+  const after=await runsOverview();assert.equal(after.research.requests-before.research.requests,2);assert.equal(after.research.cost,null);
 });
 
 test("retries of unusable answers stop at the budget, and every request sent is counted", async () => {

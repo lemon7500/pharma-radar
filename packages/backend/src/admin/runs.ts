@@ -63,9 +63,9 @@ export async function runsOverview() {
     count(*) FILTER(WHERE research_retry_at IS NOT NULL)::int AS retrying,
     count(*) FILTER(WHERE research_backfill_attempted_at >= now()-interval '24 hours')::int AS attempted,
     pg_database_size(current_database()) AS database_bytes FROM articles`;
-  const [modelUsage] = await sql`SELECT count(*)::int AS requests,coalesce(sum(cost),0) AS cost FROM receipts WHERE purpose='research_backfill' AND created_at >= now()-interval '24 hours'`;
+  const [modelUsage] = await sql<{requests:number;cost:string|null}[]>`SELECT count(*)::int AS requests,sum(a.cost) AS cost FROM receipt_attempts a JOIN receipts r ON r.id=a.receipt_id WHERE r.purpose='research_backfill' AND a.started_at >= now()-interval '24 hours'`;
   return {
-    research:{...research,...modelUsage,paused:await researchBackfillPaused(),pauseReason:(await sql`SELECT value->>'reason' AS reason FROM settings WHERE key='research.backfill.paused'`)[0]?.reason || null},
+    research:{...research,...modelUsage!,paused:await researchBackfillPaused(),pauseReason:(await sql`SELECT value->>'reason' AS reason FROM settings WHERE key='research.backfill.paused'`)[0]?.reason || null},
     checkedAt: new Date(now).toISOString(),
     processes: heartbeats.map((h) => ({
       role: h.key.slice("heartbeat.".length),
