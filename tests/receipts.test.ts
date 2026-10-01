@@ -16,7 +16,8 @@ import { stopBoss } from "@aihot/backend/jobs/queue";
 
 const usage = { prompt_tokens: 80, completion_tokens: 20, total_tokens: 100 };
 let answer: (hit: number) => string = () => '{"ok":true}';
-const provider = await stub((hit) => ({ id: `stub-${hit}`, choices: [{ message: { content: answer(hit) } }], usage }));
+let finishReason: 'stop' | 'length' | undefined;
+const provider = await stub((hit) => ({ id: `stub-${hit}`, choices: [{ message: { content: answer(hit) },finish_reason:finishReason }], usage }));
 process.env.DEEPSEEK_BASE_URL = `${provider.url}/v1`;
 process.env.DEEPSEEK_API_KEY = "test-key";
 
@@ -50,6 +51,15 @@ test("an answer already received is reused instead of bought again", async () =>
   assert.equal(first.reused, false);
   assert.equal(second.reused, true);
   assert.equal(second.receiptId, first.receiptId);
+});
+
+test("a missing outer brace is recovered and reused only after a normal provider finish", async () => {
+  answer=()=>JSON.stringify({ok:true,nested:{value:'Complete value with } and "quotes".'}}).slice(0,-1);
+  const subject=`envelope-${tag()}`,before=provider.hits();
+  try {
+    finishReason='stop';assert.equal((await ask(subject)).data.ok,true);assert.equal((await ask(subject)).reused,true);assert.equal(provider.hits()-before,1);
+    finishReason='length';await assert.rejects(ask(`truncated-${tag()}`),ModelOutputError);assert.equal(provider.hits()-before,2);
+  }finally{finishReason=undefined;}
 });
 
 test("retries of unusable answers stop at the budget, and every request sent is counted", async () => {

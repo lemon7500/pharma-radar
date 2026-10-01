@@ -65,9 +65,11 @@ export function baselineResearch(material: ResearchMaterial): ResearchProfile {
     version: 1, bibliography,
     areas: RESEARCH_AREAS.filter(v => areaPatterns[v.key]!.test(material.title)).map(v => v.key),
     foci: RESEARCH_FOCI.filter(v => focusPatterns[v.key]!.test(text)).map(v => v.key),
-    documentType: bibliography.publicationTypes.some(t => /review/i.test(t)) ? "review" : null,
+    documentType: bibliography.publicationTypes.some(t => /review/i.test(t)) ? "review"
+      : bibliography.publicationTypes.some(t => /^(?:Article|Research Article)$/i.test(t)) ? "original-research" : null,
     evidenceStages: [], clinicalPhase: null,
-    origin: (bibliography.doi || bibliography.pmid) && bibliography.journal ? "primary" : "unknown",
+    origin: bibliography.publicationTypes.some(t => /research highlight|news\s*(?:and|&)\s*views/i.test(t)) ? "secondary"
+      : (bibliography.doi || bibliography.pmid) && bibliography.journal ? "primary" : "unknown",
     basis, status: basis === "title" || basis === "insufficient" ? "insufficient" : "pending",
     claims: Object.fromEntries(RESEARCH_CLAIMS.map(c => [c.key, null])) as Record<ResearchClaim, null>,
   };

@@ -117,7 +117,7 @@ export class ModelOutputError extends Error {
   }
 }
 
-function extractJson(text: string): unknown {
+export function extractJson(text: string, allowMissingEnvelope = false): unknown {
   let t = text.trim();
   const fence = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(t);
   if (fence) t = fence[1]!;
@@ -128,8 +128,28 @@ function extractJson(text: string): unknown {
   try {
     return JSON.parse(body);
   } catch {
-    return JSON.parse(escapeControlCharsInStrings(body));
+    const escaped = escapeControlCharsInStrings(body);
+    try { return JSON.parse(escaped); } catch (error) {
+      // Some JSON-mode providers finish normally but omit only the outer closing brace.
+      // Never invent a value, finish a string/array, or repair token-limit truncation.
+      if (allowMissingEnvelope && missingOuterEnvelope(escaped)) return JSON.parse(escaped + "}");
+      throw error;
+    }
   }
+}
+
+function missingOuterEnvelope(json: string): boolean {
+  const stack: string[] = []; let inString = false, escaped = false;
+  for (const ch of json) {
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+    } else if (ch === '"') inString = true;
+    else if (ch === "{" || ch === "[") stack.push(ch);
+    else if (ch === "}" || ch === "]") { if (stack.pop() !== (ch === "}" ? "{" : "[")) return false; }
+  }
+  return !inString && stack.length === 1 && stack[0] === "{" && json.endsWith("}");
 }
 
 /** Models sometimes emit raw newlines or tabs inside JSON strings (multi-line posts); escape only those. */
@@ -231,7 +251,7 @@ export async function chatJson<S extends z.ZodType>(opts: ChatJsonOptions<S>): P
   const content = response.choices?.[0]?.message?.content ?? "";
   let parsed: z.infer<S>;
   try {
-    parsed = opts.schema.parse(opts.parse ? opts.parse(content) : extractJson(content));
+    parsed = opts.schema.parse(opts.parse ? opts.parse(content) : extractJson(content, response.choices?.[0]?.finish_reason === "stop"));
   } catch (error) {
     // Unusable output: record it and let a later attempt pay for a fresh answer.
     await rejectReceivedResponse(receipt.receiptId, `unusable output: ${String(error).slice(0, 500)}`);

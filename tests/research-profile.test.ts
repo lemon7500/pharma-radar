@@ -5,7 +5,7 @@ import {baselineResearch,europePmcBibliography,normalizeDoi,materialBasis,valida
 import {parseResearchFilters} from '@aihot/contracts/research';
 import {researchSection} from '@aihot/backend/reports/compose';
 import {researchPauseReason} from '@aihot/backend/research/backfill';
-import {researchTitleKey} from '@aihot/backend/research/enrich';
+import {researchTitleKey,publisherResearchMaterial} from '@aihot/backend/research/enrich';
 import {promptText} from '@aihot/backend/editorial/prompts';
 const abstract = 'We used machine learning and virtual screening to identify natural products. The compounds were tested in vitro using cultured cells. Activity was reduced by 25 percent. The study does not establish clinical efficacy.';
 const material = {title:'Machine learning for natural product drug discovery',bodyText:abstract};
@@ -18,6 +18,13 @@ test('legacy enrichment pauses near the free capacity limit or after repeated fa
  assert.equal(researchPauseReason(399_999_999,2),false);
  assert.equal(researchPauseReason(400_000_000,0),true);
  assert.equal(researchPauseReason(0,3),true);
+});
+test('publisher metadata uses its own matched citation record and marked abstract, excluding references',()=>{
+ const url='https://www.nature.com/articles/test';
+ const html=`<meta name="citation_title" content="Natural product research"><meta name="citation_fulltext_html_url" content="${url}"><meta name="citation_doi" content="10.1234/own"><meta name="citation_journal_title" content="Test Journal"><meta name="citation_author" content="A Author"><meta name="citation_online_date" content="2026/10/01"><meta name="citation_article_type" content="Article"><meta name="citation_reference" content="citation_doi=10.1234/reference"><div id="Abs1-content"><p>${abstract}</p></div><div id="references">References 10.1234/other</div>`;
+ const own=publisherResearchMaterial(html,'Natural product research',url);assert.ok(own);assert.equal(own.bibliography.doi,'10.1234/own');assert.deepEqual(own.bibliography.authors,['A Author']);assert.equal(own.bibliography.publishedDate,'2026-10-01');assert.equal(own.abstract,abstract);assert.equal(baselineResearch({title:'Natural product research',bodyText:own.abstract,bibliography:own.bibliography}).documentType,'original-research');
+ assert.equal(publisherResearchMaterial(html,'A different paper',url),null);assert.equal(publisherResearchMaterial(html,'Natural product research',url+'-other'),null);
+ const missing=publisherResearchMaterial(html.replace(/<div id="Abs1-content">.*?<\/div>/,'<div id="references">References</div>'),'Natural product research',url);assert.equal(missing!.abstract,null);
 });
 test('research facets allow cross-topic papers and independent evidence stages',()=>{
  const {profile,support}=validateResearchExtraction({
