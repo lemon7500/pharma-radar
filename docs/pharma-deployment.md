@@ -1,6 +1,6 @@
 # 药研雷达：免费部署方案
 
-站名：药研雷达；项目和仓库标识：`pharma-radar`。面向中药与天然产物、AI 药物发现、药理和制剂、临床及监管动态。代码已发布到 [lemon7500/pharma-radar](https://github.com/lemon7500/pharma-radar)。Supabase 免费项目已创建，数据库迁移、种子配置、私有存储和匿名访问限制已验证；DeepSeek 连接及 GitHub Secrets 已配置，Render 部署进行中，公开站点尚未上线。
+站名：药研雷达；项目和仓库标识：`pharma-radar`。面向中药与天然产物、AI 药物发现、药理和制剂、临床及监管动态。网站已上线：[pharma-radar.onrender.com](https://pharma-radar.onrender.com)，[管理登录](https://pharma-radar.onrender.com/admin/login)，[公开源码](https://github.com/lemon7500/pharma-radar)。Supabase 免费项目、私有存储、DeepSeek、GitHub Secrets 均已配置；小时采集和每日加密备份已启用。
 
 ## 资源组合
 
@@ -29,6 +29,8 @@ flowchart LR
 ```
 
 网页访问不会调用模型。定时任务每小时第 17 分钟触发，最多处理 20 分钟，任务队列和调用回执保存在数据库中，下次继续。初始信源每 3 小时检查一次；第一轮每个来源最多回补 3 篇，避免首次拉取历史资料产生大量模型调用。每日汇总仍使用原框架的北京时间逻辑，但依赖下一次 Actions 实际启动；有延迟时补齐。全文展示关闭，仅提供中文摘要和原文链接。
+
+首轮抓取成功，所有 5 个来源健康；模型预算限制会使部分条目等待下一批，不代表抓取失败。精选页仅显示达到编辑门槛的内容，首批没有合格条目时可查看“全部动态”。公开网页、API、RSS、MCP、管理员登录和匿名后台拒绝已通过生产检查。
 
 数据库通过 Supabase **session pooler 的 5432 端口**连接，适配 IPv4；不使用 6543 transaction pooler，因为项目用到了预处理语句等会话行为。见[官方连接说明](https://supabase.com/docs/guides/database/connecting-to-postgres)。专用项目位于新加坡，PostgreSQL 17.11；真实连接、迁移和 pg-boss 已验证。连接串使用 `sslmode=verify-full`；Render 与 Actions 用 `NODE_EXTRA_CA_CERTS=deploy/supabase-ca.crt` 信任官方 CA，备份客户端另外配置 `PGSSLROOTCERT`。本地运行也需在启动 Node 前设置该 CA 环境变量。[官方 SSL 说明](https://supabase.com/docs/guides/platform/ssl-enforcement)及[证书下载](https://supabase-downloads.s3-ap-southeast-1.amazonaws.com/prod/ssl/prod-ca-2021.crt)。
 
@@ -62,6 +64,8 @@ Supabase 使用一个**新建的专用项目**，迁移启用 public 表的 RLS 
 数据库每日做一次 PostgreSQL 17 自定义格式 dump，只包含应用的 `public` 和 `pgboss` schema，不导出 Supabase 托管的内部系统。校验 archive 目录后 AES-256-GCM 加密，按 40 MB 分片写到私有 `pharma-backups/daily/<备份编号>/`，最后更新 `daily/latest.json`。这适配[免费单文件 50 MB 限制](https://supabase.com/docs/guides/storage/uploads/file-limits)。压缩 dump 上限 250 MB；超过时保留旧备份并报错。
 
 新备份全部上传成功后才替换索引，再删除上一份。正常只保留最新一份，不提供历史回滚；若索引响应丢失或旧分片删除失败，优先保留完整文件并报错，需核对后清理多余分片。它和数据库属于同一个 Supabase 项目，无法抵抗整个账号或项目被删除。加密密钥需要单独保存；失去它就无法恢复。备份不上传到公开 Actions artifacts。Storage 里的截图和二维码不在数据库 dump 中，恢复数据库时还需要原来的文件 bucket。
+
+手动运行备份 workflow 时，另一个验证 job 会在 GitHub 临时运行器的空 PostgreSQL 中下载、解密和恢复真实备份，核对表、来源及 RLS，然后随运行器销毁。每日定时备份不重复执行恢复验证。验证脚本强制使用本机的专用 `pharma_restore` 库，拒绝云端目标；不上传 dump 或数据库内容到公开 artifacts。
 
 恢复：在受信任本机设置私有存储环境变量，运行 `node deploy/download-backup.ts` 获取和校验分片；设置 `BACKUP_ENCRYPTION_KEY`，执行 `node deploy/decrypt-backup.mjs <加密文件> <输出.dump>`。将 `DATABASE_URL` 改为新的空库，再用 PostgreSQL 17 客户端执行 `node deploy/restore-backup.ts <输出.dump>`；它会拒绝含有应用表的目标，安装必要扩展并跳过已存在的 schema 创建语句。核对文件 bucket 并再次运行迁移。不要把真实备份恢复进公共测试库。暂停项目需从 Supabase 控制台恢复；Actions 自动停用需从 GitHub 重新启用，平时定期维护仓库。
 
