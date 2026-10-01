@@ -8,7 +8,8 @@ import type { ReactNode } from "react";
 import type { Route } from "./+types/root";
 import "./app.css";
 import { Sidebar } from "./components/shell/Sidebar";
-import { Masthead, JournalFooter } from "./components/shell/Masthead";
+import { JournalFooter } from "./components/shell/Masthead";
+import { Wordmark } from "./components/Logo";
 import { MobileTabBar } from "./components/shell/MobileTabBar";
 import { BackToTop, NavigationProgress } from "./components/shell/Chrome";
 import { RingMark } from "./components/Logo";
@@ -76,13 +77,12 @@ function SiteShell({ changelogVersion, children }: { changelogVersion: string | 
       <a href="#main" className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[70] focus:rounded-control focus:bg-surface focus:px-3 focus:py-2">
         跳到正文
       </a>
-      <Masthead />
-      {/* Mobile shell (≤ 960px): one centred column, the tab bar below. Desktop: the page fills the main area
-          up to the list width (--page-max-wide), centred beyond it. */}
-      <main id="main" className="journal-main">
-        {children}
-      </main>
-      <JournalFooter />
+      <Sidebar changelogVersion={changelogVersion} />
+      <div className="reader-main">
+        <header className="reader-mobile-brand"><Link to="/" aria-label="Pharma Radar 首页"><Wordmark size={22} /></Link><Link to="/all?search=1">检索</Link></header>
+        <main id="main" className="journal-main">{children}</main>
+        <JournalFooter />
+      </div>
       <MobileTabBar changelogVersion={changelogVersion} />
       <BackToTop />
     </div>

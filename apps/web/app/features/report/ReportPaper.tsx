@@ -69,6 +69,7 @@ function Masthead({ report, index }: { report: ReportDetail; index: ReportNaviga
         ))}
         <span className="ml-auto whitespace-nowrap text-[12px] text-ink-4">约 {report.readingMinutes} 分钟读完</span>
       </div>
+      <p className="py-3 text-[11px] leading-relaxed text-ink-3">资料窗口：{new Date(report.windowStart).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai",hour12:false})} — {new Date(report.windowEnd).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai",hour12:false})} · 编制于 {new Date(report.generatedAt).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai",hour12:false})} · 第 {report.revision} 版 · UTC+08:00</p>
     </header>
   );
 }

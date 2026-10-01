@@ -41,9 +41,9 @@ function SideLink({ item, dot }: { item: NavItem; dot: boolean }) {
 export function Sidebar({ changelogVersion }: { changelogVersion: string | null }) {
   const dot = useChangelogDot(changelogVersion);
   return (
-    <aside className="sticky top-0 hidden h-dvh w-[180px] shrink-0 flex-col border-r border-line bg-sidebar px-3 pb-3.5 pt-6 lg:flex">
-      <Link to="/" className="mb-4 flex h-[50px] items-center px-1 text-ink" aria-label={`${SITE.name} 首页`}>
-        <Wordmark size={24} />
+    <aside className="reader-sidebar sticky top-0 hidden h-dvh w-[208px] shrink-0 flex-col border-r border-line bg-sidebar px-3 pb-3.5 pt-6 lg:flex">
+      <Link to="/" className="mb-4 flex min-h-[64px] flex-col items-start justify-center gap-3 px-1 text-ink" aria-label={`${SITE.name} 首页`}>
+        <Wordmark size={22} /><span className="px-2 text-[11px] text-ink-3">药学研究与进展</span>
       </Link>
       <nav className="-mx-1 flex-1 overflow-y-auto px-1" aria-label="主导航">
         {SIDEBAR.map((section) => (
@@ -59,6 +59,7 @@ export function Sidebar({ changelogVersion }: { changelogVersion: string | null 
       </nav>
       <div className="mt-2 space-y-2.5 px-1 pt-1">
         <ThemeSwitch className="mx-1" />
+        <p className="px-2 text-[11px] text-ink-4">匿名阅读 · 收藏留在本机</p>
         {SITE.icp && (
           <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer" className="block px-2 text-[10px] text-ink-4 hover:text-ink-3">
             {SITE.icp}

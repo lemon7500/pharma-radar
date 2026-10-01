@@ -2,6 +2,7 @@
 // but it is served from the same public read layer as v1, RSS and MCP.
 import type { CategoryKey, ChannelKey } from "./taxonomy.ts";
 import type { ResearchFilters, ResearchProfile } from "./research.ts";
+import type { PublicationTime } from "./publication-time.ts";
 
 export type SourceKind = "rss" | "web_list" | "json_list" | "x_search" | "mp_account" | "external";
 
@@ -44,6 +45,8 @@ export interface StoryRef {
 }
 
 export interface ItemSummary {
+  additionalSourceCount?: number;
+  publicationTime?: PublicationTime;
   research?: ResearchProfile | null;
   id: string;
   revision: number;
@@ -67,7 +70,11 @@ export interface ItemSummary {
 
 /** The fields rendered by a site feed card; full original text lives in the item detail. */
 export interface FeedItemSummary extends Pick<ItemSummary, "id" | "title" | "summary" | "reason" | "publishedAt" | "timelineAt" | "category" | "tags" | "score" | "selected" | "channel" | "research"> {
-  source: Pick<SourceRef, "name">;
+  additionalSourceCount?: number;
+  story?: StoryRef | null;
+  publicationTime?: PublicationTime;
+  discoveredAt?: string;
+  source: Pick<SourceRef, "name"> & Partial<Pick<SourceRef, "id" | "iconUrl" | "iconSrcSet">>;
   x: (Pick<XPostView, "authorName" | "handle" | "avatarUrl" | "avatarSrcSet" | "media"> & {
     quoted: Omit<NonNullable<XPostView["quoted"]>, "url"> | null;
   }) | null;
@@ -123,7 +130,7 @@ export interface TimelineResponse {
 }
 
 export interface PoolResponse {
-  filters: TimelineFilters & { q: string | null; tab: "time" | "relevance"; sort?: "newest" | "oldest" };
+  filters: TimelineFilters & { q: string | null; tab: "time" | "relevance"; sort?: "newest" | "oldest"; from?: string | null; to?: string | null; timeBasis?: "publication"; selectedOnly?: boolean };
   items: FeedItemSummary[];
   page: number;
   pageCount: number;

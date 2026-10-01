@@ -3,7 +3,8 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { Presence } from "../components/ui/Presence";
 import { pageMeta } from "../lib/seo";
-import { exportBundle, importBundle, removeStar, useStarred, type ImportReport } from "../lib/local-state";
+import { exportBundle, importBundle, removeStar, useStarred, useReadSet, markRead, type ImportReport } from "../lib/local-state";
+import { publicationTime, publicationLabel } from "@aihot/contracts/publication-time";
 import { fullDateTime, shortSourceName } from "../lib/format";
 import { IconBookmark, IconDownload, IconClose } from "../components/icons";
 
@@ -27,6 +28,15 @@ function reportText(r: ImportReport): string {
 
 export default function StarredPage() {
   const starred = useStarred();
+  const read = useReadSet();
+  const [sort,setSort] = useState("saved"); const [unread,setUnread] = useState(false);
+  const timeOf = (s:typeof starred[number]) => publicationTime({publishedAt:s.publishedAt,research:s.publishedDate ? {bibliography:{publishedDate:s.publishedDate}} : null});
+  const visible = starred.filter(s => !unread || !read.has(s.id)).slice().sort((a,b) => {
+    if(sort === "saved") return b.savedAt.localeCompare(a.savedAt);
+    const at = timeOf(a).date, bt = timeOf(b).date;
+    if(!at || !bt) return at ? -1 : bt ? 1 : b.savedAt.localeCompare(a.savedAt);
+    return bt.localeCompare(at) || b.savedAt.localeCompare(a.savedAt);
+  });
   const [mounted, setMounted] = useState(false);
   const [availability, setAvailability] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
@@ -84,6 +94,7 @@ export default function StarredPage() {
         </div>
       </header>
       <p className="rounded-tile border border-line bg-surface px-4 py-2.5 text-[12.5px] text-ink-3">收藏只保存在当前浏览器；清除浏览器数据或换设备后不会同步。</p>
+      {mounted && starred.length > 0 && <div className="reading-list-toolbar"><span>{visible.length} 条资料</span><label>排序<select value={sort} onChange={e => setSort(e.target.value)}><option value="saved">最近收藏</option><option value="published">最近发表</option></select></label><label><input type="checkbox" checked={unread} onChange={e => setUnread(e.target.checked)} /> 仅看未读</label></div>}
       <Presence show={!!notice} enter="anim-notice-in" exit="anim-fade-out" duration={160}>
         <div
           role="status"
@@ -105,14 +116,14 @@ export default function StarredPage() {
         </div>
       ) : (
         <ul className="mt-3 lg:space-y-3">
-          {starred.map((s) => {
+          {visible.map((s) => {
             const status = availability[s.id];
             const unavailable = status === "unavailable";
             return (
               <li key={s.id} className={`relative border-b border-line-soft py-4 lg:card lg:px-[18px] lg:py-[15px] ${unavailable ? "opacity-70" : "lg:card-hover"}`}>
                 <div className="flex items-center gap-2 text-[12.5px] text-ink-4">
                   <span className="min-w-0 truncate text-ink-3">{shortSourceName(s.sourceName)}</span>
-                  {s.publishedAt && <span className="num shrink-0">· {fullDateTime(s.publishedAt)}</span>}
+                  <span className="num">· {publicationLabel(timeOf(s))} · 发表</span>
                   <span className="ml-auto hidden shrink-0 sm:inline">
                     收藏于 <span className="num">{fullDateTime(s.savedAt)}</span>
                   </span>
@@ -124,12 +135,13 @@ export default function StarredPage() {
                   {unavailable ? (
                     s.title
                   ) : (
-                    <Link to={`/items/${s.id}`} className="transition-colors after:absolute after:inset-0 after:content-[''] hover:text-accent">
+                    <Link to={`/items/${s.id}`} onClick={() => markRead(s.id)} className="transition-colors after:absolute after:inset-0 after:content-[''] hover:text-accent">
                       {s.title}
                     </Link>
                   )}
                 </h2>
                 {s.summary && <p className="mt-1.5 line-clamp-2 text-[14px] leading-[1.75] text-ink-3">{s.summary}</p>}
+                <p className="mt-2 text-[11px] text-ink-4">{read.has(s.id) ? "已读 · " : ""}收藏于 {fullDateTime(s.savedAt)}</p>
                 {unavailable && <p className="mt-2 text-[12.5px] text-hot">这条内容已不再公开，收藏会保留直到你手动移除。</p>}
                 {status === "summary-only" && <p className="mt-2 text-[12.5px] text-amber-ink">应来源方要求，这条内容现在只提供摘要。</p>}
               </li>
@@ -137,6 +149,7 @@ export default function StarredPage() {
           })}
         </ul>
       )}
+      {mounted && starred.length > 0 && !visible.length && <p className="library-empty">当前阅读清单没有未读资料。</p>}
     </div>
   );
 }

@@ -91,7 +91,7 @@ export function registerSite(app: FastifyInstance) {
   app.get("/api/site/research/topics/:slug", siteHandler(async (req, reply) => {
     const q = looseQuery(req);
     const area = RESEARCH_AREAS.some(a => a.key === q.area) ? q.area as ResearchArea : undefined;
-    const data = await researchTopicPage((req.params as { slug:string }).slug, Number(q.page || 1), area);
+    const data = await researchTopicPage((req.params as { slug:string }).slug, Number(q.page || 1), area, { from:q.from, to:q.to });
     if (!data) return sendProblem(req, reply, { status:404, code:"not_found", detail:"topic page not found", cacheControl:"public, max-age=60" });
     return sendJsonWithEtag(req, reply, data, { etagPrefix:"research-topic", cacheControl:"public, max-age=60, s-maxage=60" });
   }));
@@ -121,7 +121,8 @@ export function registerSite(app: FastifyInstance) {
     const page = Math.min(Math.max(Number(q.page) || 1, 1), 50);
     const search = q.q?.trim() ? q.q.trim().slice(0, 200) : null;
     const tab = q.tab === "relevance" ? "relevance" : "time";
-    const data = await loadPool({ ...filters, q: search, tab, page, sort: q.sort === "oldest" ? "oldest" : "newest" });
+    const data = await loadPool({ ...filters, q: search, tab, page, sort: q.sort === "oldest" ? "oldest" : "newest",
+      timeBasis: "publication", from: q.from, to: q.to, selectedOnly: q.view === "selected" });
     const { generatedAt: _, ...content } = data;
     return sendJsonWithEtag(req, reply, data, { etagPrefix: "pool", cacheControl: "public, max-age=60, s-maxage=60", etagOf: content });
   }));

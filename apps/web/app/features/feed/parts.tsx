@@ -52,7 +52,7 @@ export function MediaThumbs({ media, className = "" }: { media: MediaView[]; cla
 }
 
 /** Bookmark toggle kept in this browser (收藏). */
-export function StarButton({ item, size = 26, className = "" }: { item: Pick<FeedItemSummary, "id" | "title" | "summary" | "source" | "publishedAt" | "score" | "selected">; size?: number; className?: string }) {
+export function StarButton({ item, size = 26, className = "" }: { item: Pick<FeedItemSummary, "id" | "title" | "summary" | "source" | "publishedAt" | "score" | "selected"> & Partial<Pick<FeedItemSummary,"publicationTime">>; size?: number; className?: string }) {
   const starred = useIsStarred(item.id);
   const [pulse, setPulse] = useState(0);
   const on = starred;
@@ -68,6 +68,7 @@ export function StarButton({ item, size = 26, className = "" }: { item: Pick<Fee
         const added = toggleStar({
           id: item.id, title: item.title, summary: item.summary, sourceName: item.source.name,
           publishedAt: item.publishedAt, score: item.score, aiSelected: item.selected,
+          ...(item.publicationTime?.precision === "day" ? {publishedDate:item.publicationTime.date} : {}),
         });
         if (added) setPulse((p) => p + 1);
       }}

@@ -34,7 +34,7 @@ export function europePmcBibliography(item: unknown): Bibliography {
     isPreprint: /PPR/.test(String(v.source)) || types.some(t => /preprint/i.test(t)),
   });
 }
-export function bibliographyPresent(b: Bibliography): boolean { return !!(b.doi || b.pmid || b.journal || b.authors.length); }
+export function bibliographyPresent(b: Bibliography): boolean { return !!(b.doi || b.pmid || b.journal || b.publishedDate || b.authors.length); }
 
 export interface ResearchMaterial { title: string; bodyText?: string | null; excerpt?: string | null; bibliography?: Bibliography | null; fullText?: boolean; }
 export function materialBasis(material: ResearchMaterial): ResearchProfile["basis"] {

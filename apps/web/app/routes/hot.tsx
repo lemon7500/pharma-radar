@@ -17,8 +17,8 @@ export async function loader({ request }: { request: Request }) {
 
 export function meta() {
   return pageMeta({
-    title: withSubject("热点榜"),
-    description: "过去 48 小时 AI 圈讨论最多的 10 个事件：热度指数、趋势与组成热度的公开来源。",
+    title: "研究热点",
+    description: "已接入药学信源的近期关注事件、趋势与公开报道。关注度不代表研究质量。",
     path: "/hot",
     image: "/og/pages/hot.png",
   });
@@ -235,10 +235,10 @@ export default function HotPage() {
               <span className="absolute inline-flex size-full animate-ping rounded-full bg-hot opacity-30" />
               <span className="relative inline-flex size-2 rounded-full bg-hot" />
             </span>
-            实时热度
+            信源关注度
           </div>
-          <h1 className="mt-1.5 text-[24px] font-bold leading-[1.3] tracking-[-0.01em] text-ink lg:text-[26px]">{withSubject("热点榜")}</h1>
-          <p className="mt-1.5 text-[13.5px] text-ink-3">过去 {hot.windowHours} 小时，AI 圈讨论最多的 {hot.entries.length || 10} 件事</p>
+          <h1 className="mt-1.5 text-[24px] font-bold leading-[1.3] tracking-[-0.01em] text-ink lg:text-[26px]">研究热点</h1>
+          <p className="mt-1.5 text-[13.5px] text-ink-3">过去 {hot.windowHours} 小时，已接入信源中的 {hot.entries.length} 个关注事件。关注度不代表研究质量。</p>
         </div>
         {hot.computedAt && (
           <p className="text-[12px] text-ink-4">

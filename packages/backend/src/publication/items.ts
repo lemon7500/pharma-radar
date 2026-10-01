@@ -6,8 +6,10 @@ import { sql, type Db } from "../db.ts";
 import { proxiedImage, proxiedImageSet } from "../media/imgproxy.ts";
 import { displayTags } from "./rules.ts";
 import type { ResearchProfile } from "@aihot/contracts/research";
+import { publicationTime } from "@aihot/contracts/publication-time";
 
 export interface ItemRow {
+  additional_source_count?: number;
   research?: ResearchProfile | null;
   id: string;
   revision: number;
@@ -54,6 +56,7 @@ export interface ItemRow {
 
 /** Columns every item listing selects. Internal judgement details never leave this layer. */
 export const ITEM_COLUMNS = sql`
+  (SELECT count(DISTINCT d.source_id)::int FROM article_discoveries d JOIN sources ds ON ds.id=d.source_id WHERE d.article_id=p.article_id AND d.source_id <> p.source_id AND ds.participation_mode='editorial') AS additional_source_count,
   p.research,
   p.article_id AS id, p.revision, p.title, p.original_title, p.summary, p.reason, p.category, p.tags, p.score,
   p.selected, p.eligible, p.channel, p.url, p.published_at, p.discovered_at, p.timeline_at, p.sort_at, p.first_party, p.visibility,
@@ -157,6 +160,7 @@ export function toItemSummary(row: ItemRow): ItemSummary {
   const x = row.channel === "x" ? xView(row, true) : null;
   return {
     id: row.id,
+    additionalSourceCount: Number(row.additional_source_count ?? 0),
     revision: row.revision,
     title: row.title,
     originalTitle: row.original_title,
@@ -172,6 +176,7 @@ export function toItemSummary(row: ItemRow): ItemSummary {
     },
     links: { aihot: `/items/${row.id}`, original: row.url },
     publishedAt: row.published_at?.toISOString() ?? null,
+    publicationTime: publicationTime({ publishedAt: row.published_at?.toISOString() ?? null, research: row.research }),
     discoveredAt: row.discovered_at.toISOString(),
     timelineAt: row.timeline_at.toISOString(),
     category: (row.category as CategoryKey | null) ?? null,
@@ -190,7 +195,9 @@ export function toFeedItemSummary(row: ItemRow): FeedItemSummary {
   const item = toItemSummary(row);
   return {
     id: item.id, title: item.title, summary: item.summary, reason: item.reason,
-    source: { name: item.source.name }, publishedAt: item.publishedAt, timelineAt: item.timelineAt,
+    source: { name: item.source.name, id: item.source.id, iconUrl: item.source.iconUrl, iconSrcSet: item.source.iconSrcSet }, publishedAt: item.publishedAt, timelineAt: item.timelineAt,
+    publicationTime: item.publicationTime, discoveredAt: item.discoveredAt,
+    additionalSourceCount: item.additionalSourceCount, story:item.story,
     category: item.category, tags: item.tags, score: item.score, selected: item.selected, channel: item.channel,
     research: item.research ?? null,
     x: item.x ? {

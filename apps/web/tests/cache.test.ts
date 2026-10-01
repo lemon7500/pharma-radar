@@ -35,6 +35,7 @@ const api = createServer((req, res) => {
     res.setHeader("Cache-Control", "public, max-age=30, s-maxage=30");
     return res.end(JSON.stringify({selected:[],latest:[],total:0,updatedAt:null,foci:[],areas:[],refreshAt}));
   }
+  if (url.pathname === "/api/site/pool") return res.end(JSON.stringify({filters:{channel:"all",category:null,tag:null,q:null,tab:"time",sort:"newest",timeBasis:"publication",selectedOnly:url.searchParams.get("view") === "selected"},items:[],page:1,pageCount:1,total:0,todayCount:0,freshness:"2026-09-28T00:00:00Z",generatedAt:"2026-09-28T00:00:00Z"}));
   if (url.pathname === "/api/site/hot") return res.end(JSON.stringify({ entries: [] }));
   if (url.pathname === "/api/site/echo-client") return res.end(JSON.stringify({ forwarded: req.headers["x-forwarded-for"], real: req.headers["x-real-ip"] }));
   if (url.pathname === "/api/site/items/long-lived") return res.end(JSON.stringify({ id: "long-lived", title: "t" }));

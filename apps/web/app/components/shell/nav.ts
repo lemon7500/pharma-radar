@@ -22,8 +22,9 @@ export const SIDEBAR: Array<{ title: string; items: NavItem[] }> = [
     items: [
       { to: "/", label: "导读", icon: IconBolt, end: true },
       { to: "/all", label: "资料库", icon: IconList },
-      { to: "/topics", label: "专题", icon: IconGrid },
+      { to: "/hot", label: "研究热点", icon: IconFlame },
       { to: "/daily", label: "研究简报", icon: IconDoc },
+      { to: "/topics", label: "专题", icon: IconGrid },
       { to: "/starred", label: "阅读清单", icon: IconBookmark },
     ],
   },
@@ -42,9 +43,8 @@ export const SIDEBAR: Array<{ title: string; items: NavItem[] }> = [
   {
     title: "更多",
     items: [
-      { to: "/hot", label: "研究动态", icon: IconFlame },
-      { to: "/agent", label: "Agent 接入", icon: IconPlug },
-      { to: "/about", label: "关于", icon: IconHeart },
+      { to: "/about", label: "关于本站", icon: IconHeart },
+      { to: "/agent", label: "API 与订阅", icon: IconPlug },
       { to: "/changelog", label: "更新日志", icon: IconHistory, changelog: true },
       { to: "/feedback", label: "反馈", icon: IconMessage },
     ],

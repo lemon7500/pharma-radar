@@ -39,6 +39,7 @@ test('own DOI deduplicates across sources and keeps discoveries; existing aliase
  const original=await record(3,`10.1234/${T}-dedup`);
  const discovered=await upsertMaterial({sourceId:S2,url:`https://other.example.org/${T}`,title:'Second source',bibliography:{...bib,doi:`10.1234/${T}-dedup`},via:'fetch'});
  assert.equal(discovered.articleId,original);assert.equal(discovered.created,false);
+ const indexed=await loadPool({channel:'all',category:null,tag:null,q:T,timeBasis:'publication'});assert.equal(indexed.items.find(i=>i.id===original)!.additionalSourceCount,1);
  const sources=await sql`SELECT source_url FROM article_discoveries WHERE article_id=${original}`;assert.equal(sources.length,2);
  const alias=await record(4);await sql`UPDATE articles SET bibliography=${sql.json({...bib,doi:`10.1234/${T}-dedup`} as never)} WHERE id=${alias}`;
  const affected=await reconcileResearchDoi(alias);assert.equal(affected.length,2);for(const id of affected) await publishArticle(id);
