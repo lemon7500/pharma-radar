@@ -28,6 +28,10 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - name: Install PostgreSQL client
         run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-common
           sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get update
           sudo apt-get install -y postgresql-client-17
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
       - run: node deploy/backup.ts

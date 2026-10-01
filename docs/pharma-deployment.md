@@ -1,6 +1,6 @@
 # 药研雷达：免费部署方案
 
-站名：药研雷达；项目和仓库标识：`pharma-radar`。面向中药与天然产物、AI 药物发现、药理和制剂、临床及监管动态。以下准备已写入代码；云账号、模型服务和公开站点尚未创建。
+站名：药研雷达；项目和仓库标识：`pharma-radar`。面向中药与天然产物、AI 药物发现、药理和制剂、临床及监管动态。代码已发布到 [lemon7500/pharma-radar](https://github.com/lemon7500/pharma-radar)；Render、Supabase 和模型服务仍待账号连接，公开站点尚未上线。
 
 ## 资源组合
 
@@ -63,7 +63,7 @@ Supabase 使用一个**新建的专用项目**，迁移启用 public 表的 RLS 
 
 新备份全部上传成功后才替换索引，再删除上一份。正常只保留最新一份，不提供历史回滚；若索引响应丢失或旧分片删除失败，优先保留完整文件并报错，需核对后清理多余分片。它和数据库属于同一个 Supabase 项目，无法抵抗整个账号或项目被删除。加密密钥需要单独保存；失去它就无法恢复。备份不上传到公开 Actions artifacts。Storage 里的截图和二维码不在数据库 dump 中，恢复数据库时还需要原来的文件 bucket。
 
-恢复：在受信任本机设置私有存储环境变量，运行 `node deploy/download-backup.ts` 获取和校验分片；设置 `BACKUP_ENCRYPTION_KEY`，执行 `node deploy/decrypt-backup.mjs <加密文件> <输出.dump>`。在新的空库先安装 `pg_trgm` 扩展，再用 PostgreSQL 17 的 `pg_restore --no-owner --no-acl` 恢复；核对文件 bucket 并再次运行迁移。不要把真实备份恢复进公共测试库。暂停项目需从 Supabase 控制台恢复；Actions 自动停用需从 GitHub 重新启用，平时定期维护仓库。
+恢复：在受信任本机设置私有存储环境变量，运行 `node deploy/download-backup.ts` 获取和校验分片；设置 `BACKUP_ENCRYPTION_KEY`，执行 `node deploy/decrypt-backup.mjs <加密文件> <输出.dump>`。将 `DATABASE_URL` 改为新的空库，再用 PostgreSQL 17 客户端执行 `node deploy/restore-backup.ts <输出.dump>`；它会拒绝含有应用表的目标，安装必要扩展并跳过已存在的 schema 创建语句。核对文件 bucket 并再次运行迁移。不要把真实备份恢复进公共测试库。暂停项目需从 Supabase 控制台恢复；Actions 自动停用需从 GitHub 重新启用，平时定期维护仓库。
 
 ## 上线步骤和用户需要提供的内容
 

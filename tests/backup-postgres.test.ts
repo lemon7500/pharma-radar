@@ -52,14 +52,11 @@ test("a real PostgreSQL archive uploads privately, decrypts and restores its app
     await getBoss();await stopBoss();
     await sql.unsafe("CREATE DATABASE backup_restore_ci");created=true;
     restored=postgres(restoredUrl.toString(),{max:1});
-    await restored.unsafe("CREATE EXTENSION IF NOT EXISTS pg_trgm");
     const env={...process.env,DATABASE_URL:database.toString(),SUPABASE_URL:storageUrl,SUPABASE_SERVICE_ROLE_KEY:"local-backup-test-key",SUPABASE_BACKUPS_BUCKET:"pharma-backups",BACKUP_ENCRYPTION_KEY:key.toString("hex")};
     await run(process.execPath,["deploy/backup.ts"],env);
     const store=createClient(storageUrl,"local-backup-test-key",{auth:{persistSession:false,autoRefreshToken:false}}).storage.from("pharma-backups");
     await writeFile(dump,decryptBackup(await downloadBackup(store),key));
-    await run("pg_restore",["--no-owner","--no-acl","--exit-on-error","--dbname","backup_restore_ci",dump],{
-      ...process.env,PGHOST:database.hostname,PGPORT:database.port || "5432",PGUSER:decodeURIComponent(database.username),PGPASSWORD:decodeURIComponent(database.password),PGSSLMODE:"disable",
-    });
+    await run(process.execPath,["deploy/restore-backup.ts",dump],{...process.env,DATABASE_URL:restoredUrl.toString()});
     for(const table of ["sources","receipts","analyses"]) {
       const [original]=await sql.unsafe(`SELECT count(*)::int AS n FROM ${table}`);
       const copiedRows:Array<{n:number}>=await restored.unsafe<{n:number}[]>(`SELECT count(*)::int AS n FROM ${table}`);

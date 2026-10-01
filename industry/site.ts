@@ -71,6 +71,16 @@ export const ABOUT = {
   copyright: `${SITE.name} 是聚合摘要和阅读索引，原文版权归各来源所有。如果你是来源方，希望更正、下架或调整展示方式，可以通过`,
 } as const;
 
+export const TOPIC_PAGE = {
+  title: "按主题看药研",
+  description: "按研究方向、机构与资料类型追踪中药、天然产物、AI 制药和药学进展。",
+  groups: [
+    { key: "company", name: "机构与企业", blurb: "按研究机构和制药企业追踪具体进展" },
+    { key: "field", name: "研究方向", blurb: "中药、天然产物、AI 制药、药理、制剂与临床" },
+    { key: "genre", name: "资料与证据", blurb: "政策监管、原始研究、综述与研发工具" },
+  ],
+} as const;
+
 /** “AI 日报”这类说法：行业词和名词之间，英文词加空格，中文词不加。 */
 export function withSubject(noun: string): string {
   return /[A-Za-z0-9]$/.test(SITE.subject) ? `${SITE.subject} ${noun}` : `${SITE.subject}${noun}`;

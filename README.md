@@ -36,4 +36,4 @@ node --env-file=.env deploy/start-web.mjs
 
 正式上线前需要运营者确认 [使用规则](industry/pages/terms.md) 和 [隐私说明](industry/pages/privacy.md)。现有文件是拟定版。
 
-上游说明保存在 [docs/upstream-readme.md](docs/upstream-readme.md)，软件许可见 [LICENSE](LICENSE)。资讯原文的版权与许可属于各来源。
+上游说明保存在 [README.upstream.md](README.upstream.md)，软件许可见 [LICENSE](LICENSE)。资讯原文的版权与许可属于各来源。
