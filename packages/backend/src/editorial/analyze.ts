@@ -27,7 +27,8 @@ import {
 } from "./writing.ts";
 import { CATEGORY_BY_ITEM_TYPE, CATEGORY_GUIDE, CATEGORY_TAGS, ENTITIES, ENTITY_TAGS, ITEM_TYPES, normalizeTags, TOPIC_TAGS } from "./vocabulary.ts";
 import { promptText, promptVersion } from "./prompts.ts";
-import { validateResearchExtraction, type ResearchSupport } from "../research/profile.ts";
+import { normalizeBibliography, validateResearchExtraction, type ResearchSupport, type ResearchRejections } from "../research/profile.ts";
+import { RESEARCH_PROCESSING_VERSION, researchMaterialFingerprint } from "../research/material.ts";
 import type { ResearchProfile } from "@aihot/contracts/research";
 
 export { buildMaterial, loadAnalyzeInput, type AnalyzeInputArticle };
@@ -175,7 +176,7 @@ export interface AnalysisRun {
     receiptIds: number[];
     reused: boolean;
   } | null;
-  structure: { model: string; category: string | null; tags: string[]; subjects: string[]; fact: z.infer<typeof FactSchema>; receiptId: number; reused: boolean; research?: ResearchProfile; researchSupport?: ResearchSupport } | null;
+  structure: { model: string; category: string | null; tags: string[]; subjects: string[]; fact: z.infer<typeof FactSchema>; receiptId: number; reused: boolean; research?: ResearchProfile; researchSupport?: ResearchSupport; researchRejections?: ResearchRejections } | null;
 }
 
 const isContentFilter = (error: unknown) => error instanceof ProviderRejectedError && !error.retryable && /contentFilter|"1301"/.test(error.message);
@@ -299,8 +300,8 @@ async function runStructure(a: AnalyzeInputArticle, opts: StepOpts): Promise<Non
     attemptTag: tagged(opts.attemptTag, "structure"),
   });
   const subjects = [...new Set(res.data.subjects.map((s) => s.trim().toLowerCase()).filter((s) => s in ENTITIES))];
-  const { profile, support } = validateResearchExtraction(res.data.research, a);
-  return { model: res.model, category: res.data.category, tags: normalizeTags(res.data.tags), subjects, fact: res.data.fact, receiptId: res.receiptId, reused: res.reused, research: res.data.research === undefined ? undefined : profile, researchSupport: support };
+  const { profile, support, rejections } = validateResearchExtraction(res.data.research, a);
+  return { model: res.model, category: res.data.category, tags: normalizeTags(res.data.tags), subjects, fact: res.data.fact, receiptId: res.receiptId, reused: res.reused, research: res.data.research === undefined ? undefined : profile, researchSupport: support, researchRejections: rejections };
 }
 
 /** The content understanding; null when the model's content filter declines the material. */
@@ -480,8 +481,8 @@ export async function analyzeArticle(articleId: string, opts: StepOpts = {}): Pr
     researchSupport: run.structure?.researchSupport ?? {},
   };
   const committed = await sql.begin(async (tx) => {
-    const [current] = await tx<{ revision: number }[]>`SELECT revision FROM articles WHERE id = ${articleId} FOR UPDATE`;
-    const stale = !current || current.revision !== input.revision;
+    const [current] = await tx`SELECT revision,title,coalesce(research_abstract,body_text) AS "bodyText",excerpt,bibliography,research_material_kind AS "materialKind" FROM articles WHERE id = ${articleId} FOR UPDATE`;
+    const stale = !current || current.revision !== input.revision || !!run.structure?.research && researchMaterialFingerprint({title:current.title,bodyText:current.bodyText,excerpt:current.excerpt,bibliography:normalizeBibliography(current.bibliography),materialKind:current.materialKind ?? undefined}) !== researchMaterialFingerprint(input);
     const [row] = await tx<{ id: number }[]>`
       INSERT INTO analyses (article_id, input_revision, origin, model, prompt_version, receipt_ids, relevance, category, tags,
         subjects, title_zh, summary_zh, reason_zh, score, selected, output)
@@ -494,7 +495,9 @@ export async function analyzeArticle(articleId: string, opts: StepOpts = {}): Pr
       await tx`UPDATE articles SET processing_state = ${out.relevance === "block" ? "blocked" : "analyzed"}, processing_error = NULL WHERE id = ${articleId}`;
       if (run.structure?.research) await tx`UPDATE articles SET research_profile = ${tx.json(run.structure.research as never)},
         research_support = ${tx.json((run.structure.researchSupport ?? {}) as never)}, research_revision = ${input.revision},
-        research_enriched_at = now(), research_retry_at = NULL WHERE id = ${articleId}`;
+        research_enriched_at = now(), research_retry_at = NULL,
+        research_processing_version=${RESEARCH_PROCESSING_VERSION},research_material_fingerprint=${researchMaterialFingerprint(input)},
+        research_validation=${tx.json((run.structure.researchRejections ?? {}) as never)} WHERE id = ${articleId}`;
     }
     return { analysisId: row!.id, stale };
   });

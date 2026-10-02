@@ -4,11 +4,12 @@ import { sql } from "../db.ts";
 import { collapseWhitespace, truncate } from "../lib/text.ts";
 import { produceImage } from "../media/images.ts";
 import type { ContentPart } from "../providers/llm.ts";
-import type { Bibliography } from "@aihot/contracts/research";
+import type { Bibliography, ResearchProfile } from "@aihot/contracts/research";
 import { normalizeBibliography } from "../research/profile.ts";
 
 export interface AnalyzeInputArticle {
   bibliography?: Bibliography | null;
+  materialKind?: ResearchProfile["materialKind"];
   id: string;
   revision: number;
   title: string;
@@ -52,9 +53,9 @@ export async function loadAnalyzeInput(articleId: string): Promise<AnalyzeInputA
     id: string; revision: number; title: string; url: string; author: string | null; published_at: Date | null; discovered_at: Date;
     body_text: string | null; excerpt: string | null; body_status: string; x_post: Record<string, any> | null; x_article: { title?: string; text?: string } | null;
     media: Array<Record<string, any>>; source_name: string; source_kind: string; tier: string; first_party: boolean; source_tags: string[]; owner_entity_id: string | null;
-    config: Record<string, any>; translation_zh: string | null; bibliography: Bibliography | null;
+    config: Record<string, any>; translation_zh: string | null; bibliography: Bibliography | null; research_material_kind: ResearchProfile["materialKind"];
   }[]>`
-    SELECT a.id, a.revision, a.title, a.url, a.author, a.published_at, a.discovered_at, coalesce(a.research_abstract,a.body_text) AS body_text, a.excerpt, a.body_status, a.x_post, a.x_article, a.media, a.bibliography,
+    SELECT a.id, a.revision, a.title, a.url, a.author, a.published_at, a.discovered_at, coalesce(a.research_abstract,a.body_text) AS body_text, a.excerpt, a.body_status, a.x_post, a.x_article, a.media, a.bibliography, a.research_material_kind,
            s.name AS source_name, s.kind AS source_kind, s.tier, s.first_party, s.tags AS source_tags, s.owner_entity_id, s.config,
            tr.body_text AS translation_zh
     FROM articles a JOIN sources s ON s.id = a.source_id
@@ -69,6 +70,7 @@ export async function loadAnalyzeInput(articleId: string): Promise<AnalyzeInputA
       fetchesBody: row.config?.fetchPublicContent === true || !!row.config?.detail || row.source_kind === "web_list",
     },
     translationZh: row.translation_zh,
+    materialKind: row.research_material_kind ?? undefined,
   };
 }
 
@@ -84,6 +86,8 @@ export function buildMaterial(a: AnalyzeInputArticle): string {
   lines.push(`类型：${KIND_LABEL[a.source.kind] ?? a.source.kind}；分级：${a.source.tier}；一手来源：${a.source.firstParty ? "是" : "否"}`);
   lines.push("</source>");
   lines.push("<material>");
+  if (a.bibliography) lines.push(`文献元数据（来源记录）：${JSON.stringify(a.bibliography)}`);
+  if (a.materialKind) lines.push(`材料类型：${a.materialKind}`);
   if (a.publishedAt) lines.push(`发布时间：${beijingDate(a.publishedAt)} ${beijingTime(a.publishedAt)}（北京时间）`);
   if (a.author) lines.push(`作者：${a.author}`);
   if (a.xPost) {

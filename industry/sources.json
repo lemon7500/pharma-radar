@@ -1,5 +1,5 @@
 {
-  "$comment": "已验证的免费信源；两个 Europe PMC 检索分别管理中药与 AI 制药关键词。首次每源回填 3 条。",
+  "$comment": "已验证的免费信源；Europe PMC 每轮先检查最新页，再续读固定日期窗口，最多 3 页 × 15 条；RSS 首次回填 3 条。",
   "sources": [
     {
       "tier": "T1_5",
@@ -57,7 +57,7 @@
         "天然产物"
       ],
       "config": {
-        "url": "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=%28%22traditional+Chinese+medicine%22+OR+%22Chinese+herbal+medicine%22+OR+%22natural+products%22+OR+%22ethnopharmacology%22%29+AND+FIRST_PDATE%3A%5BNOW-7DAYS+TO+NOW%5D&format=json&resultType=core&pageSize=15&sort_date=y",
+        "url": "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=%28%22traditional+Chinese+medicine%22+OR+%22Chinese+herbal+medicine%22+OR+%22natural+products%22+OR+%22ethnopharmacology%22%29+AND+FIRST_PDATE%3A%5BNOW-7DAYS+TO+NOW%5D+sort_date%3Ay&format=json&resultType=core&pageSize=15",
         "itemsPath": "resultList.result",
         "titlePaths": [
           "title"
@@ -91,7 +91,7 @@
         "AI制药"
       ],
       "config": {
-        "url": "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=%28%28%22drug+discovery%22+OR+%22drug+design%22%29+AND+%28%22artificial+intelligence%22+OR+%22machine+learning%22+OR+%22deep+learning%22%29%29+AND+FIRST_PDATE%3A%5BNOW-7DAYS+TO+NOW%5D&format=json&resultType=core&pageSize=15&sort_date=y",
+        "url": "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=%28%28%22drug+discovery%22+OR+%22drug+design%22%29+AND+%28%22artificial+intelligence%22+OR+%22machine+learning%22+OR+%22deep+learning%22%29%29+AND+FIRST_PDATE%3A%5BNOW-7DAYS+TO+NOW%5D+sort_date%3Ay&format=json&resultType=core&pageSize=15",
         "itemsPath": "resultList.result",
         "titlePaths": [
           "title"
@@ -126,7 +126,7 @@
         "论文"
       ],
       "config": {
-        "url": "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=%28JOURNAL_ISSN%3A1749-8546%29+AND+FIRST_PDATE%3A%5BNOW-7DAYS+TO+NOW%5D&format=json&resultType=core&pageSize=15&sort_date=y",
+        "url": "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=%28JOURNAL_ISSN%3A1749-8546%29+AND+FIRST_PDATE%3A%5BNOW-7DAYS+TO+NOW%5D+sort_date%3Ay&format=json&resultType=core&pageSize=15",
         "itemsPath": "resultList.result",
         "titlePaths": [
           "title"

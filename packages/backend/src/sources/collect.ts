@@ -8,7 +8,9 @@ import { BudgetExceededError } from "../providers/receipts.ts";
 import { fetchRss } from "./rss.ts";
 import { allowed, fetchDetail, fetchWebList, type DetailNeed } from "./web-list.ts";
 import { unsupportedConfig } from "./config-keys.ts";
-import { fetchJsonList } from "./json-list.ts";
+import { fetchJsonList, isEuropePmcSource } from "./json-list.ts";
+import { fetchEuropePmc } from "./europe-pmc.ts";
+import { outsidePharmacy } from "../research/profile.ts";
 import { fetchXSearch, planXShards, readXSearch, shardHandle, shardQuery, SHARDABLE_SQL, tweetToCandidate, type XBacklog, type XRead } from "./x.ts";
 import { FetchError, type Candidate, type SourceRow } from "./types.ts";
 
@@ -81,7 +83,7 @@ async function store(sourceId: string, candidates: Candidate[], backfill: string
   return { created, revised };
 }
 
-export async function collectSource(sourceId: string, opts: { force?: boolean } = {}): Promise<CollectResult> {
+export async function collectSource(sourceId: string, opts: { force?: boolean; europePmcRead?: (url: string) => Promise<Record<string, any>> } = {}): Promise<CollectResult> {
   const source = await loadSource(sourceId);
   if (!source) return { sourceId, status: "skipped", found: 0, created: 0, revised: 0, error: "missing" };
   if (!source.enabled && !opts.force) return { sourceId, status: "skipped", found: 0, created: 0, revised: 0, error: "paused" };
@@ -112,6 +114,10 @@ export async function collectSource(sourceId: string, opts: { force?: boolean } 
       if (rss.notModified) detail = { notModified: true, httpStatus: 304 };
     }
     else if (source.kind === "web_list") candidates = await fetchWebList(source);
+    else if (source.kind === "json_list" && isEuropePmcSource(source)) {
+      const result = await fetchEuropePmc(source, { read: opts.europePmcRead });
+      candidates = result.candidates; nextCursor.europePmc = result.cursor; detail = result.detail;
+    }
     else if (source.kind === "json_list") candidates = await fetchJsonList(source);
     else {
       const x = await fetchXSearch(source);
@@ -124,12 +130,17 @@ export async function collectSource(sourceId: string, opts: { force?: boolean } 
     }
     found = candidates.length;
     candidates = candidates.filter((c) => allowed(c.url, source)).map((c) => rewriteUrl(c, source)).filter((c) => !noiseFiltered(c, source));
+    if (isEuropePmcSource(source)) {
+      const before = candidates.length;
+      candidates = candidates.filter(c => !outsidePharmacy(`${c.title}\n${c.bodyText || c.excerpt || ""}`));
+      detail = { ...detail, outsidePharmacy: before - candidates.length };
+    }
     if (source.config.sortByPublishedAt) candidates.sort((a, b) => (b.publishedAt?.getTime() ?? 0) - (a.publishedAt?.getTime() ?? 0));
 
     // First import of a new source: bounded, and archived by source time (never "today", never pushed).
     const backfillLimit = Number(source.config._aihot?.initialBackfillLimit ?? 30);
     const backfillMonths = Number(source.config._aihot?.initialBackfillMonths ?? 12);
-    if (firstImport) {
+    if (firstImport && !isEuropePmcSource(source)) {
       const cutoff = Date.now() - backfillMonths * 30 * 86400000;
       candidates = candidates.filter((c) => !c.publishedAt || c.publishedAt.getTime() >= cutoff).slice(0, backfillLimit);
     } else if (source.kind !== "x_search") {
@@ -183,11 +194,13 @@ export async function collectSource(sourceId: string, opts: { force?: boolean } 
 
     if (firstImport) nextCursor.initializedAt = new Date().toISOString();
     nextCursor.lastOkAt = new Date().toISOString();
-    await sql`
+    const advanced = await sql`
       UPDATE sources SET last_fetch_at = now(), last_ok_at = now(), fail_count = 0, last_error = NULL,
         health = 'ok', cursor = ${sql.json(nextCursor as never)}, updated_at = now(),
         next_fetch_at = now() + make_interval(mins => interval_minutes)
-      WHERE id = ${sourceId}`;
+      WHERE id = ${sourceId} AND cursor IS NOT DISTINCT FROM ${source.cursor ? sql.json(source.cursor as never) : null}
+      RETURNING id`;
+    if (!advanced.count) throw new FetchError("source cursor changed during collection; replay retained");
     await sql`UPDATE fetch_runs SET status = 'ok', finished_at = now(), found_count = ${found}, new_count = ${created},
                 detail = ${detail ? sql.json(detail as never) : null} WHERE id = ${run!.id}`;
     return { sourceId, status: "ok", found, created, revised };

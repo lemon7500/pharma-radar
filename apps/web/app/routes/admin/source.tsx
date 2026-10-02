@@ -36,6 +36,8 @@ interface Source {
 
 /** X runs: pages read, and older stretches still to read (backlog) or given up (dropped). */
 interface RunDetail {
+  provider?:string; truncated?:boolean; latestHitCount?:number; outsidePharmacy?:number;
+  pendingWindows?:Array<{from:string;to:string;read:number;hitCount:number}>;
   pages?: number;
   backlog?: number;
   dropped?: number;
@@ -277,7 +279,7 @@ export default function SourceDetail({ loaderData }: Route.ComponentProps) {
                 ["创建", bj(s.created_at, true)],
               ]}
             />
-            {s.cursor && <div className="mt-3"><Json value={s.cursor} label="游标" /></div>}
+            {Array.isArray((s.cursor?.europePmc as any)?.windows) && <div className="mt-3 text-[12px] leading-relaxed"><strong>Europe PMC 待续读窗口</strong>{(s.cursor!.europePmc as any).windows.map((w:any)=><p key={w.from+w.to}>{w.from} — {w.to} · 已读 {w.read} / 命中 {w.hitCount || "待查询"}</p>)}<p>每轮先检查最新页，最多 3 页 × 15 条；入库成功后保存位置。</p></div>}{s.cursor && <div className="mt-3"><Json value={s.cursor} label="游标" /></div>}
           </Card>
           <Card title="采集记录" pad={false}>
             <DataTable
@@ -293,7 +295,7 @@ export default function SourceDetail({ loaderData }: Route.ComponentProps) {
                   render: (r) => (
                     <span className="inline-flex gap-1">
                       <Badge tone={r.status === "ok" ? "ok" : r.status === "failed" ? "bad" : "muted"} title={r.error ?? undefined}>{r.status}</Badge>
-                      {!!r.detail?.dropped && <Badge tone="bad" title="有一段更早的帖子没能读完，其中的内容可能漏采">可能漏采</Badge>}
+                      {r.detail?.provider === "europe-pmc" && <Badge tone={r.detail.truncated ? "warn" : "ok"} title={r.detail.pendingWindows?.map(w=>`${w.from}—${w.to} 已读 ${w.read}/${w.hitCount}`).join("；")}>{r.detail.pages} 页 · {r.detail.truncated ? "窗口待续读" : "窗口已读完"}</Badge>}{!!r.detail?.dropped && <Badge tone="bad" title="有一段更早的帖子没能读完，其中的内容可能漏采">可能漏采</Badge>}
                       {!r.detail?.dropped && !!r.detail?.backlog && <Badge tone="warn" title="帖子多于一轮能读的页数，余下的在后面几轮接着读">续读 {r.detail.backlog} 段</Badge>}
                     </span>
                   ),

@@ -1,10 +1,11 @@
 import { load } from "cheerio";
 import { sql } from "../db.ts";
 import { guardedFetch } from "../lib/http-fetch.ts";
-import { stripTags, collapseWhitespace } from "../lib/text.ts";
-import { normalizeDoi, normalizeBibliography, europePmcBibliography, materialBasis } from "./profile.ts";
+import { collapseWhitespace } from "../lib/text.ts";
+import { normalizeDoi, normalizeBibliography, europePmcBibliography } from "./profile.ts";
 import type { Bibliography } from "@aihot/contracts/research";
-export const researchTitleKey = (s: string) => collapseWhitespace(stripTags(stripTags(s))).toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+import { scientificText } from "./material.ts";
+export const researchTitleKey = (s: string) => collapseWhitespace(scientificText(s)).toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
 /** Publisher metadata and its explicitly marked abstract, never a reference-list identifier. */
 export function publisherResearchMaterial(html: string, title: string, url: string) {
   const $ = load(html);
@@ -18,7 +19,7 @@ export function publisherResearchMaterial(html: string, title: string, url: stri
     publishedDate:(meta("citation_online_date") || meta("citation_publication_date"))?.replace(/\//g,"-"),
     publicationTypes:[meta("citation_article_type")].filter(Boolean), isPreprint:false,
   });
-  const abstract = collapseWhitespace($("#Abs1-content p").map((_,e)=>$(e).text()).get().join("\n"));
+  const abstract = scientificText($("#Abs1-content").html() || "");
   return {bibliography,abstract:abstract.length>=100?abstract:null};
 }
 /** Fetches a free source record inside collection jobs only. Never called from a public request. */
@@ -28,7 +29,6 @@ export async function enrichResearchMaterial(articleId: string): Promise<void> {
     FROM articles a JOIN sources s ON s.id = a.source_id WHERE a.id = ${articleId}`;
   if (!a || !["rss", "json_list"].includes(a.kind)) return;
   const current = normalizeBibliography(a.bibliography);
-  if (current.journal && current.doi && materialBasis({ title: a.title, bodyText: a.body_text, bibliography: current }) === "abstract") return;
   const url = new URL(a.url);
   let doi = current.doi;
   let pmid = current.pmid;
@@ -45,7 +45,8 @@ export async function enrichResearchMaterial(articleId: string): Promise<void> {
         doi=merged.doi;
         await sql`UPDATE articles SET bibliography=${sql.json(merged as never)},
           research_abstract=coalesce(${publisher.abstract},research_abstract),research_source_url=${a.url},
-          research_enriched_at=NULL,updated_at=now() WHERE id=${articleId} AND revision=${a.revision}`;
+          research_material_kind=${b.publicationTypes.some(t=>/news|highlight/i.test(t)) ? "publisher-summary" : "paper-abstract"},
+          research_checked_at=now(),updated_at=now() WHERE id=${articleId} AND revision=${a.revision}`;
         if (publisher.abstract && merged.doi && merged.journal) return;
       }
     }
@@ -62,14 +63,15 @@ export async function enrichResearchMaterial(articleId: string): Promise<void> {
   const match = matches.find(r => doi ? normalizeDoi(r.doi) === doi : pmid ? String(r.pmid || r.id) === pmid : researchTitleKey(String(r.title || "")) === researchTitleKey(a.title));
   if (!match || researchTitleKey(String(match.title || "")) !== researchTitleKey(a.title)) return;
   const bibliography = europePmcBibliography(match);
-  const abstract = typeof match.abstractText === "string" ? stripTags(stripTags(match.abstractText)).trim().slice(0, 30_000) : null;
+  const abstract = typeof match.abstractText === "string" ? scientificText(match.abstractText) : null;
   const useful = abstract && abstract.length >= 100;
   // The verified source abstract is additive: historical bodies, translations and selection stay intact.
   // The research extraction has its own source-support record and receipt; publication hashes include it.
   await sql`UPDATE articles SET bibliography = ${sql.json(bibliography as never)},
     research_abstract = CASE WHEN ${!!useful} THEN ${abstract} ELSE research_abstract END,
     research_source_url = ${endpoint.toString()},
-    research_enriched_at = NULL, updated_at = now()
+    research_material_kind = ${bibliography.publicationTypes.some(t=>/news|highlight/i.test(t)) ? "publisher-summary" : "paper-abstract"},
+    research_checked_at = now(), updated_at = now()
     WHERE id = ${articleId} AND revision = ${a.revision}`;
 }
 

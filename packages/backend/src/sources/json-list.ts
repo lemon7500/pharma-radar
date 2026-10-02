@@ -4,6 +4,7 @@ import { guardedFetch } from "../lib/http-fetch.ts";
 import { collapseWhitespace, stripTags } from "../lib/text.ts";
 import { FetchError, type Candidate, type SourceRow } from "./types.ts";
 import { europePmcBibliography } from "../research/profile.ts";
+import { scientificText } from "../research/material.ts";
 
 export function getPath(obj: unknown, path: string): unknown {
   if (!path) return obj;
@@ -129,9 +130,10 @@ function embeddedJson(html: string, source: SourceRow): unknown {
   throw new FetchError(`embedded key ${key} not found`);
 }
 
-export async function fetchJsonList(source: SourceRow): Promise<Candidate[]> {
+export const isEuropePmcSource = (source: SourceRow) => /^https:\/\/www\.ebi\.ac\.uk\/europepmc\/webservices\/rest\/search(?:\?|$)/.test(String(source.config.url));
+export async function fetchJsonData(source: SourceRow, requestUrl = String(source.config.url ?? "")): Promise<Record<string, any>> {
   const c = source.config;
-  const url = String(c.url ?? "");
+  const url = requestUrl;
   const headers: Record<string, string> = { accept: "application/json, text/html;q=0.9", ...(c.headers ?? {}) };
   if (/^https:\/\/api\.github\.com\//.test(url)) {
     const token = credential("collectors", "GITHUB_TOKEN");
@@ -153,6 +155,11 @@ export async function fetchJsonList(source: SourceRow): Promise<Candidate[]> {
       throw new FetchError("response is not JSON");
     }
   }
+  return data as Record<string, any>;
+}
+
+export function jsonListCandidates(source: SourceRow, data: unknown): Candidate[] {
+  const c = source.config;
   let items = c.itemsPath ? getPath(data, c.itemsPath) : c.jsonKey ? getPath(data, c.jsonKey) : data;
   if (c.itemsObjectValues && items && typeof items === "object" && !Array.isArray(items)) items = Object.values(items);
   if (!Array.isArray(items)) throw new FetchError("items path did not resolve to an array");
@@ -169,14 +176,15 @@ export async function fetchJsonList(source: SourceRow): Promise<Candidate[]> {
     const raw = item && typeof item === "object" ? { ...(item as Record<string, unknown>) } : { value: item };
     for (const k of c.rawDropKeys ?? []) delete (raw as Record<string, unknown>)[k];
     const summaryIsBody = c.summaryIsBody === true && !!summary;
-    const isEuropePmc = /^https:\/\/www\.ebi\.ac\.uk\/europepmc\/webservices\//.test(String(c.url));
+    const isEuropePmc = isEuropePmcSource(source);
+    const clean = isEuropePmc ? scientificText : stripTags;
     out.push({
       url,
-      title: collapseWhitespace(stripTags(stripTags(title))),
+      title: collapseWhitespace(scientificText(title)),
       author: firstString(item, c.authorPaths),
       publishedAt: toDate(getPath(item, c.publishedAtPath), c.publishedAtUnit),
-      excerpt: summary ? collapseWhitespace(stripTags(summary)).slice(0, 2000) : null,
-      bodyText: summaryIsBody ? stripTags(stripTags(summary!)) : null,
+      excerpt: summary ? collapseWhitespace(clean(summary)).slice(0, 2000) : null,
+      bodyText: summaryIsBody ? clean(summary!) : null,
       bodyStatus: summaryIsBody ? "ok" : "pending",
       ...(isEuropePmc ? { bibliography: europePmcBibliography(item) } : {}),
       raw: { externalId: externalId ?? null },
@@ -184,4 +192,8 @@ export async function fetchJsonList(source: SourceRow): Promise<Candidate[]> {
   }
   if (items.length > 0 && out.length === 0 && !c.requireBoolean && !c.minNumeric) throw new FetchError("no items mapped (check title/url paths)");
   return out;
+}
+
+export async function fetchJsonList(source: SourceRow): Promise<Candidate[]> {
+  return jsonListCandidates(source, await fetchJsonData(source));
 }

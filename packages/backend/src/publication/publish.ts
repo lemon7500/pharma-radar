@@ -10,6 +10,7 @@ import { collapseWhitespace, stripTags } from "../lib/text.ts";
 import { itemUrl } from "./links.ts";
 import { enqueue, QUEUES, shutdownSignal } from "../jobs/queue.ts";
 import { normalizeBibliography, supportedStoredResearch } from "../research/profile.ts";
+import { scientificText } from "../research/material.ts";
 import type { Bibliography, ResearchProfile } from "@aihot/contracts/research";
 import {
   bodyModeOf, channelOf, displayTags, isIndexable, isPoolEligible, isSelectable, mayRedistribute, type SourceFacts,
@@ -22,6 +23,7 @@ interface ArticleRow {
   research_profile: ResearchProfile | null;
   research_support: Record<string,string> | null;
   research_revision: number | null;
+  research_material_kind: ResearchProfile["materialKind"];
   id: string;
   source_id: string;
   url: string;
@@ -156,7 +158,7 @@ export async function publishArticle(articleId: string, options: PublishOptions 
 
 export async function publishArticleTx(tx: Tx, articleId: string, options: PublishOptions = {}): Promise<PublishResult | null> {
   const [article] = await tx<ArticleRow[]>`
-    SELECT id, revision, bibliography, research_profile, research_support, research_revision, canonical_article_id, source_id, url, title, language, published_at, discovered_at, timeline_at, backfill, body_status,
+    SELECT id, revision, bibliography, research_profile, research_support, research_revision, research_material_kind, canonical_article_id, source_id, url, title, language, published_at, discovered_at, timeline_at, backfill, body_status,
            coalesce(research_abstract,body_text) AS body_text, x_post, grouped_at
     FROM articles WHERE id = ${articleId} FOR UPDATE`;
   if (!article) return null;
@@ -182,7 +184,7 @@ export async function publishArticleTx(tx: Tx, articleId: string, options: Publi
   const research = supportedStoredResearch(
     f.research ?? (article.research_revision === article.revision ? article.research_profile : null),
     f.research ? f.researchSupport : article.research_support,
-    { title: article.title, bodyText: article.body_text, bibliography: normalizeBibliography(f.researchBibliography ?? article.bibliography) },
+    { title: article.title, bodyText: article.body_text, bibliography: normalizeBibliography(f.researchBibliography ?? article.bibliography), materialKind: article.research_material_kind ?? undefined },
   );
   const isChineseTitle = article.language === "zh" || /[一-鿿]/.test(article.title);
   // An X post carries its Chinese in the summary and translation; without a Chinese title its own
@@ -190,7 +192,9 @@ export async function publishArticleTx(tx: Tx, articleId: string, options: Publi
   const zhTitle = analysis?.title_zh?.trim() ? analysis.title_zh : null;
   const title = pickString(f.title, zhTitle ?? (isChineseTitle || article.x_post ? collapseWhitespace(article.title) : null));
   const structuredSummary = research.status === "ready" ? [research.claims.results ?? research.claims.question, research.claims.limitations].filter(Boolean).join(" ") : null;
-  const summary = pickString(f.summary, structuredSummary || analysis?.summary_zh || null);
+  const academic = !!(research.bibliography.doi || research.bibliography.journal || article.research_profile);
+  const scopeSummary = research.status === "insufficient" ? "当前材料不足，保留文献索引与原文入口，研究设计和结果待核对。" : "研究导读尚未完整，保留已核对的文献信息与原文入口。";
+  const summary = pickString(f.summary, structuredSummary || (academic ? scopeSummary : analysis?.summary_zh) || null);
   const category = pickString(f.category, analysis?.category ?? null);
   const candidateTags = Array.isArray(f.tags) ? (f.tags as string[]) : [...new Set([...(analysis?.tags ?? []), ...(analysis?.subjects ?? []).map((s) => `entity:${s}`)])];
   const tags = candidateTags.filter(tag => tag !== "临床试验" || research.evidenceStages.includes("clinical"));
@@ -201,13 +205,13 @@ export async function publishArticleTx(tx: Tx, articleId: string, options: Publi
   const visibility = source.participation_mode === "isolated" ? "withdrawn" : (override?.visibility ?? "public");
 
   const eligible = !article.canonical_article_id && isPoolEligible({ participationMode: source.participation_mode, relevance, title, summary });
-  const selected = isSelectable(eligible, judgedSelected, source.tier);
+  const selected = isSelectable(eligible, judgedSelected, source.tier) && (!academic || research.status === "ready") && (research.bibliography.isPreprint !== true || f.selected === true);
   const reason = selected ? pickString(f.reason, analysis?.reason_zh ?? null) : null;
   const hasXPost = !!article.x_post;
   const channel = channelOf(source.kind, hasXPost);
   const bodyMode = bodyModeOf(source, article.body_status, !!article.body_text && article.body_text.length > 0);
   const syndicate = mayRedistribute(source, bodyMode);
-  const originalTitle = isChineseTitle && title === collapseWhitespace(article.title) ? null : collapseWhitespace(stripTags(stripTags(article.title)));
+  const originalTitle = isChineseTitle && title === collapseWhitespace(article.title) ? null : collapseWhitespace(scientificText(article.title));
 
   // Release gate: first time the item met the selected conditions, released after grouping or 180 s.
   let selectedReadyAt = previous?.selected_ready_at ?? null;

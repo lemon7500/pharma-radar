@@ -53,7 +53,7 @@ export async function contentChain(id: string) {
   const [article] = await sql`
     SELECT a.id, a.source_id, a.url, a.identity_key, a.title, a.author, a.language, a.published_at, a.published_at_claim, a.discovered_at,
            a.timeline_at, a.backfill, a.body_status, a.revision, a.processing_state, a.processing_error, a.grouped_at, length(a.body_text) AS body_chars,
-           a.bibliography, a.research_profile, a.research_support, a.research_enriched_at, a.research_retry_at, a.canonical_article_id, coalesce(a.research_abstract,a.body_text,a.excerpt) AS research_material, a.research_source_url,
+           a.bibliography, a.research_profile, a.research_support, a.research_enriched_at, a.research_retry_at, a.research_processing_version, a.research_material_fingerprint, a.research_validation, a.research_material_kind, a.canonical_article_id, coalesce(a.research_abstract,a.body_text,a.excerpt) AS research_material, a.research_source_url,
            s.name AS source_name, s.kind AS source_kind, s.tier, s.participation_mode, s.site_fulltext, s.syndicate_fulltext
     FROM articles a JOIN sources s ON s.id = a.source_id WHERE a.id = ${id}`;
   if (!article) return null;
@@ -164,9 +164,9 @@ export async function overrideFields(id: string, input: { fields: unknown; clear
     next.researchBibliography = normalized;
   }
   if (fields.research !== undefined) {
-    const [a] = await sql`SELECT title, coalesce(research_abstract,body_text) AS body_text, excerpt, bibliography FROM articles WHERE id = ${id}`;
+    const [a] = await sql`SELECT title, coalesce(research_abstract,body_text) AS body_text, excerpt, bibliography, research_material_kind FROM articles WHERE id = ${id}`;
     if (!a) throw Object.assign(new Error("article not found"),{statusCode:404});
-    const result = validateAdminResearch(fields.research, { title:a.title, bodyText:a.body_text, excerpt:a.excerpt, bibliography:normalizeBibliography(next.researchBibliography ?? a.bibliography) });
+    const result = validateAdminResearch(fields.research, { title:a.title, bodyText:a.body_text, excerpt:a.excerpt, bibliography:normalizeBibliography(next.researchBibliography ?? a.bibliography), materialKind:a.research_material_kind ?? undefined });
     next.research = result.profile;
     next.researchSupport = result.support;
   }

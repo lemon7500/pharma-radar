@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { Bibliography, ResearchProfile } from "@aihot/contracts/research";
-import { FACET_GROUPS, BASIS_LABELS, RESEARCH_CLAIMS } from "@aihot/contracts/research";
+import { FACET_GROUPS, researchBasisLabel, RESEARCH_CLAIMS } from "@aihot/contracts/research";
 import { useAdminAction } from "./action";
 import { Badge, Button, Card, Field, Input, Json, ReasonDialog, Textarea } from "./ui";
 type Row = Record<string,any>;
@@ -23,8 +23,8 @@ export function AdminResearchPanel({ article,publication,override,base }: {artic
   const [structure,setStructure] = useState(""); const [error,setError] = useState("");
   const edit = () => { setMetadata(profile?.bibliography || article.bibliography || emptyBibliography);setStructure(JSON.stringify(paired(profile,support),null,2));setError("");setOpen(true); };
   return <div className="mb-5"><Card title="文献与研究结构" right={<div className="flex gap-2"><Button size="sm" onClick={edit}>修正文献与导读</Button><Button size="sm" onClick={() => setRetry(true)}>重试研究整理</Button></div>}>
-    <div className="mb-3 flex flex-wrap gap-2"><Badge>{profile ? BASIS_LABELS[profile.basis] : "待整理"}</Badge><Badge>{profile?.status === "ready" ? "导读已整理" : profile?.status === "insufficient" ? "材料不足，暂停深入导读" : "研究结构待整理"}</Badge>{article.research_retry_at && <Badge tone="warn">等待重试</Badge>}{article.canonical_article_id && <Badge>重复 DOI · 保留旧入口</Badge>}</div>
-    <Json value={profile} label="公开研究结构" /><Json value={support} label="来源依据（仅后台）" />
+    <div className="mb-3 flex flex-wrap gap-2"><Badge>{profile ? researchBasisLabel(profile) : "待整理"}</Badge><Badge>{profile?.status === "ready" ? "导读已整理" : profile?.status === "insufficient" ? "材料不足，暂停深入导读" : "研究结构待整理"}</Badge>{article.research_retry_at && <Badge tone="warn">等待重试</Badge>}{article.canonical_article_id && <Badge>重复 DOI · 保留旧入口</Badge>}</div>
+    <p className="mb-3 text-[12px] text-ink-3">处理版本：{article.research_processing_version || "旧版本"} · 材料指纹：{article.research_material_fingerprint?.slice(0,12) || "待记录"}</p><Json value={article.research_validation} label="字段拒收原因（仅后台）" /><Json value={profile} label="公开研究结构" /><Json value={support} label="来源依据（仅后台）" />
     <details className="mt-3 text-[12px]"><summary className="cursor-pointer py-2 text-accent">查看已获取材料</summary><pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap rounded-control bg-bg-sunk p-3 leading-relaxed">{article.title}{"\n\n"}{article.research_material || "没有获取摘要或正文"}</pre></details>
     <p className="mt-3 text-[12px] leading-relaxed text-ink-3">元数据请核对来源原文；研究阶段与结论必须附已获取材料中的逐字片段。人工修正记录原因、版本和来源依据，重新评估不会覆盖。</p>
   </Card>

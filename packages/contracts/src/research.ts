@@ -16,6 +16,8 @@ export interface ResearchProfile {
   areas: ResearchArea[]; foci: ResearchFocus[]; documentType: DocumentType | null;
   evidenceStages: EvidenceStage[]; clinicalPhase: string | null; origin: SourceOrigin;
   basis: "fulltext" | "abstract" | "title" | "insufficient";
+  /** Optional additive provenance; older clients can continue using basis. */
+  materialKind?: "paper-abstract" | "publisher-summary" | "fulltext" | "title" | "unusable";
   status: "ready" | "pending" | "insufficient";
   claims: Record<ResearchClaim, string | null>;
 }
@@ -46,3 +48,6 @@ export function researchFilterParams(filters: ResearchFilters): Record<string, s
 export const BASIS_LABELS: Record<ResearchProfile["basis"], string> = {
   fulltext: "基于已获取原文", abstract: "基于原文摘要", title: "仅有标题", insufficient: "研究材料不足",
 };
+export function researchBasisLabel(profile: ResearchProfile): string {
+  return profile.materialKind === "publisher-summary" && profile.basis === "abstract" ? "基于出版商研究简讯" : BASIS_LABELS[profile.basis];
+}

@@ -1,7 +1,7 @@
 import './setup.ts';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {baselineResearch,europePmcBibliography,normalizeDoi,materialBasis,validateResearchExtraction,validateAdminResearch} from '@aihot/backend/research/profile';
+import {baselineResearch,europePmcBibliography,normalizeBibliography,normalizeDoi,materialBasis,validateResearchExtraction,validateAdminResearch} from '@aihot/backend/research/profile';
 import {parseResearchFilters} from '@aihot/contracts/research';
 import {researchSection} from '@aihot/backend/reports/compose';
 import {researchPauseReason} from '@aihot/backend/research/backfill';
@@ -31,7 +31,7 @@ test('research facets allow cross-topic papers and independent evidence stages',
   foci:[{value:'tcm-natural-products',quote:'identify natural products'},{value:'ai-pharma',quote:'We used machine learning and virtual screening'}],
   areas:[{value:'discovery',quote:'We used machine learning and virtual screening'}],
   evidenceStages:[{value:'computational',quote:'We used machine learning and virtual screening'},{value:'in-vitro',quote:'tested in vitro using cultured cells'}],
-  claims:{methods:{text:'采用机器学习、虚拟筛选与体外细胞实验。',quote:'We used machine learning and virtual screening to identify natural products. The compounds were tested in vitro using cultured cells.'},results:{text:'活性降低 25%。',quote:'Activity was reduced by 25 percent.'}},
+  claims:{object:{text:'研究天然产物。',quote:'We used machine learning and virtual screening to identify natural products.'},methods:{text:'采用机器学习、虚拟筛选与体外细胞实验。',quote:'We used machine learning and virtual screening to identify natural products. The compounds were tested in vitro using cultured cells.'},results:{text:'活性降低 25%。',quote:'Activity was reduced by 25 percent.'}},
  },material);
  assert.deepEqual(profile.foci,['tcm-natural-products','ai-pharma']);assert.deepEqual(profile.evidenceStages,['computational','in-vitro']);assert.equal(profile.status,'ready');assert.ok(support['claims.methods']);
  assert.deepEqual(parseResearchFilters(new URLSearchParams('focus=ai-pharma,tcm-natural-products&area=discovery&evidence=computational,invalid&origin=primary')), {area:['discovery'],focus:['ai-pharma','tcm-natural-products'],evidence:['computational'],origin:['primary']});
@@ -47,7 +47,8 @@ test('titles, references, invented numbers and unsupported clinical labels canno
 });
 test('clinical phases require an explicit phase in the same source material',()=>{
  const text='In a randomized phase II trial, enrolled patients received the investigational treatment. Methods and results are reported in this clinical trial.';
- const r=validateResearchExtraction({evidenceStages:[{value:'clinical',quote:text}],clinicalPhase:{value:'II',quote:text}}, {title:'Clinical study',bodyText:text});
+ const bibliography=normalizeBibliography({doi:'10.1234/clinical',journal:'Clinical Journal',publicationTypes:['Journal Article']});
+ const r=validateResearchExtraction({evidenceStages:[{value:'clinical',quote:text}],clinicalPhase:{value:'II',quote:text}}, {title:'Clinical study',bodyText:text,bibliography});
  assert.deepEqual(r.profile.evidenceStages,['clinical']);assert.equal(r.profile.clinicalPhase,'II');
  const bad=validateResearchExtraction({evidenceStages:[{value:'clinical',quote:text}],clinicalPhase:{value:'III',quote:text}}, {title:'Clinical study',bodyText:text});assert.equal(bad.profile.clinicalPhase,null);
 });

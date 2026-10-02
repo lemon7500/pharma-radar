@@ -12,6 +12,9 @@ import {overrideFields,rerun,setVisibility} from '@aihot/backend/admin/content';
 import {reconcileResearchDoi} from '@aihot/backend/research/enrich';
 import {claimResearchBackfill,backfillResearch} from '@aihot/backend/research/backfill';
 import {stopBoss} from '@aihot/backend/jobs/queue';
+import {RESEARCH_PROCESSING_VERSION,researchMaterialFingerprint} from '@aihot/backend/research/material';
+import {loadAnalyzeInput} from '@aihot/backend/editorial/input';
+import {collectSource} from '@aihot/backend/sources/collect';
 const T=tag(),S=`research-${T}`,S2=`research-other-${T}`;
 const body='We used machine learning and virtual screening for natural products. We tested compounds in vitro with cultured cells. Our results showed activity reduced by 25 percent. Further animal and clinical studies are required.';
 const bib=normalizeBibliography({doi:`10.1234/${T}`,authors:['A Author'],journal:'Test Journal',publishedDate:'2026-09-20',publicationTypes:['Journal Article']});
@@ -21,8 +24,8 @@ async function record(n:number,doi:string|null=null) {
  const bibliography={...bib,doi:doi||`10.1234/${T}-${n}`};
  const {articleId}=await upsertMaterial({sourceId:S,url:`https://example.org/${T}/${n}`,title:`Machine learning for natural product drug discovery ${n}`,bodyText:body,bibliography,bodyStatus:'ok',via:'fetch',discoveredAt:new Date(Date.now()-n*60000)});
  await sql`INSERT INTO analyses(article_id,input_revision,origin,relevance,title_zh,summary_zh,score,selected,category) VALUES(${articleId},1,'rule','pass',${`药学研究样本 ${T} ${n}`},'研究摘要',70,false,'paper')`;
- const {profile,support}=validateResearchExtraction({evidenceStages:[{value:'computational',quote:'We used machine learning and virtual screening'},{value:'in-vitro',quote:'We tested compounds in vitro with cultured cells'}],claims:{results:{text:'活性降低25%。',quote:'activity reduced by 25 percent'}}},{title:'Machine learning for natural product drug discovery',bodyText:body,bibliography});
- await sql`UPDATE articles SET research_profile=${sql.json(profile as never)},research_support=${sql.json(support)},research_revision=revision WHERE id=${articleId}`;
+ const {profile,support}=validateResearchExtraction({foci:[{value:'ai-pharma',quote:'We used machine learning and virtual screening'},{value:'tcm-natural-products',quote:'We used machine learning and virtual screening for natural products.'}],evidenceStages:[{value:'computational',quote:'We used machine learning and virtual screening'},{value:'in-vitro',quote:'We tested compounds in vitro with cultured cells'}],claims:{object:{text:'研究天然产物。',quote:'We used machine learning and virtual screening for natural products.'},methods:{text:'采用机器学习及体外实验。',quote:'We tested compounds in vitro with cultured cells.'},results:{text:'活性降低25%。',quote:'activity reduced by 25 percent'}}},{title:'Machine learning for natural product drug discovery',bodyText:body,bibliography});
+ await sql`UPDATE articles SET research_profile=${sql.json(profile as never)},research_support=${sql.json(support)},research_revision=revision,processing_state='analyzed' WHERE id=${articleId}`;
  await publishArticle(articleId);return articleId;
 }
 test('combined filters, search metadata and sort include crossing papers without exposing support quotes',async()=>{
@@ -54,11 +57,11 @@ test('share images and exported reading notes hide unverified legacy claims and 
  const id=await record(7);
  const note=await exportMarkdown(id);assert.ok(note);assert.match(note.body,/核心结果[\s\S]*活性降低25%/);assert.match(note.body,/DOI：10\.1234/);assert.match(note.body,/研究局限[\s\S]*未提供足够依据/);
  assert.ok(!note.body.includes('quote'));
- const share=await loadItemShare(id);assert.equal(share!.summary,'活性降低25%。');assert.equal(share!.researchKicker,'研究资料');
+ const share=await loadItemShare(id);assert.equal(share!.summary,'活性降低25%。');assert.equal(share!.researchKicker,'原始研究');
  await sql`UPDATE articles SET body_text='References: 10.1234/a 10.1234/b 10.1234/c',revision=revision+1 WHERE id=${id}`;
  await sql`UPDATE analyses SET summary_zh='未经证实的临床疗效',category='clinical',tags=ARRAY['临床试验','药理机制'] WHERE article_id=${id}`;
  await publishArticle(id);
- const pendingShare=await loadItemShare(id);assert.match(pendingShare!.summary!,/待确认/);assert.ok(!pendingShare!.summary!.includes('临床疗效'));assert.equal(pendingShare!.researchKicker,'研究资料');
+ const pendingShare=await loadItemShare(id);assert.match(pendingShare!.summary!,/待确认/);assert.ok(!pendingShare!.summary!.includes('临床疗效'));assert.equal(pendingShare!.researchKicker,'原始研究');
  const detail=await loadItemDetail(id);assert.equal(detail.kind,'found');if(detail.kind==='found'){assert.ok(!detail.detail.tags.includes('临床试验'));assert.ok(detail.detail.tags.includes('药理机制'));assert.equal(detail.detail.category,'clinical');}
  const pendingNote=await exportMarkdown(id);assert.ok(pendingNote);assert.match(pendingNote.body,/暂不生成深入导读/);assert.ok(!pendingNote.body.includes('活性降低25')&&!pendingNote.body.includes('未经证实的临床疗效'));
  const quote='We enrolled patients in a randomized phase II clinical trial.';
@@ -88,7 +91,7 @@ test('backfill valves and malformed model output keep reading available and sche
   process.env.RESEARCH_BACKFILL_ENABLED='true';process.env.MODEL_CALLS_ENABLED='false';
   assert.equal((await backfillResearch({limit:1})).disabled,true);assert.equal(provider.hits(),0);
   process.env.MODEL_CALLS_ENABLED='true';process.env.STRUCTURE_MODEL='default';process.env.LLM_BASE_URL=provider.url;process.env.LLM_API_KEY='local-test-only';process.env.LLM_MODEL='test-model';
-  const result=await backfillResearch({limit:1});assert.equal(result.failed,1);assert.ok(provider.hits()>0);
+  const result=await backfillResearch({limit:1,articleIds:[id],enrichMaterial:async()=>{}});assert.equal(result.failed,1);assert.ok(provider.hits()>0);
   const [a]=await sql`SELECT research_retry_at FROM articles WHERE id=${id}`;assert.ok(a!.research_retry_at>new Date());
   assert.equal((await loadItemDetail(id)).kind,'found');
   await sql`UPDATE articles SET research_backfill_attempted_at=NULL WHERE id=${id}`;
@@ -96,6 +99,45 @@ test('backfill valves and malformed model output keep reading available and sche
   for(const [key,value] of Object.entries({RESEARCH_BACKFILL_ENABLED:previous.enabled,MODEL_CALLS_ENABLED:previous.model,STRUCTURE_MODEL:previous.structure,LLM_BASE_URL:previous.url,LLM_API_KEY:previous.key})) value===undefined?delete process.env[key]:process.env[key]=value;
   await provider.close();
  }
+});
+test('preprints are never automatically selected; audited manual approval and clearing propagate centrally',async()=>{
+ const id=await record(8);await sql`UPDATE articles SET bibliography=jsonb_set(bibliography,'{isPreprint}','true'),research_enriched_at=NULL WHERE id=${id}`;
+ await sql`UPDATE analyses SET selected=true WHERE article_id=${id}`;
+ await publishArticle(id);let [p]=await sql`SELECT selected FROM publications WHERE article_id=${id}`;assert.equal(p!.selected,false);
+ await overrideFields(id,{fields:{selected:true},version:0,reason:'人工核对预印本研究与学习价值'},'test-editor');[p]=await sql`SELECT selected FROM publications WHERE article_id=${id}`;assert.equal(p!.selected,true);
+ await overrideFields(id,{fields:{},clear:['selected'],version:1,reason:'取消人工精选'},'test-editor');[p]=await sql`SELECT selected FROM publications WHERE article_id=${id}`;assert.equal(p!.selected,false);
+});
+test('Europe PMC cursor is committed after storage, including duplicate replay after a partial insert failure',async()=>{
+ const sid=`pmc-${T}`,fn=`reject_pmc_${T}`,trigger=`reject_pmc_${T}`;
+ const cursor={initializedAt:'2026-10-01',lastOkAt:'2026-10-01'};
+ const config={url:'https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=drug%20AND%20FIRST_PDATE:[NOW-7DAYS%20TO%20NOW]',itemsPath:'resultList.result',titlePaths:['title'],urlTemplate:'https://europepmc.org/article/MED/{id}',summaryPaths:['abstractText'],summaryIsBody:true,publishedAtPath:'firstPublicationDate'};
+ await sql`INSERT INTO sources(id,name,kind,tier,participation_mode,config,cursor) VALUES(${sid},${sid},'json_list','T1_5','editorial',${sql.json(config)},${sql.json(cursor)})`;
+ const data={hitCount:2,nextCursorMark:'tail',resultList:{result:[{id:'101',title:'Drug first',doi:`10.1234/${T}-pmc1`,abstractText:body,firstPublicationDate:'2026-10-02'},{id:'102',title:'Drug second',doi:`10.1234/${T}-pmc2`,abstractText:body,firstPublicationDate:'2026-10-01'}]}};
+ const read=async(url:string)=>new URL(url).searchParams.get('cursorMark')==='*'?data:{hitCount:2,nextCursorMark:null,resultList:{result:[]}};
+ // A throwaway DB-only trigger models a failed insertion after one article has committed.
+ await sql.unsafe(`CREATE FUNCTION ${fn}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.source_id='${sid}' AND NEW.title='Drug second' THEN RAISE EXCEPTION 'storage failure fixture'; END IF; RETURN NEW; END $$`);
+ await sql.unsafe(`CREATE TRIGGER ${trigger} BEFORE INSERT ON articles FOR EACH ROW EXECUTE FUNCTION ${fn}()`);
+ try {
+  const failed=await collectSource(sid,{europePmcRead:read});assert.equal(failed.status,'failed');
+  const [unchanged]=await sql`SELECT cursor FROM sources WHERE id=${sid}`;assert.deepEqual(unchanged!.cursor,cursor);
+  const [partial]=await sql`SELECT count(*)::int AS n FROM articles WHERE source_id=${sid}`;assert.equal(partial!.n,1);
+ } finally {await sql.unsafe(`DROP TRIGGER ${trigger} ON articles`);await sql.unsafe(`DROP FUNCTION ${fn}()`);}
+ const retry=await collectSource(sid,{europePmcRead:read});assert.equal(retry.status,'ok');assert.equal(retry.created,1);
+ const [finished]=await sql`SELECT cursor FROM sources WHERE id=${sid}`;assert.deepEqual(finished!.cursor.europePmc.windows,[]);
+ const [stored]=await sql`SELECT count(*)::int AS n FROM articles WHERE source_id=${sid}`;assert.equal(stored!.n,2);
+ const [originalDate]=await sql`SELECT published_at FROM articles WHERE source_id=${sid} AND title='Drug second'`;assert.equal(originalDate!.published_at.toISOString().slice(0,10),'2026-10-01');
+});
+test('unchanged refreshed material reuses stored extraction; a changed abstract is arranged for extraction',async()=>{
+ const id=await record(9),input=(await loadAnalyzeInput(id))!,fingerprint=researchMaterialFingerprint(input);
+ await sql`UPDATE articles SET research_processing_version=${RESEARCH_PROCESSING_VERSION},research_material_fingerprint=${fingerprint},research_enriched_at=NULL WHERE id=${id}`;
+ const previous={enabled:process.env.RESEARCH_BACKFILL_ENABLED,model:process.env.MODEL_CALLS_ENABLED};
+ try {process.env.RESEARCH_BACKFILL_ENABLED='true';process.env.MODEL_CALLS_ENABLED='true';
+ const before=(await sql`SELECT count(*)::int AS n FROM receipts`)[0]!.n;
+ const done=await backfillResearch({limit:1,articleIds:[id],enrichMaterial:async()=>{}});assert.equal(done.processed,1);
+ assert.equal((await sql`SELECT count(*)::int AS n FROM receipts`)[0]!.n,before);
+ await sql`UPDATE articles SET research_abstract=${body+' Updated result: 30 percent.'},research_enriched_at=NULL,research_backfill_attempted_at=NULL WHERE id=${id}`;
+ assert.notEqual(researchMaterialFingerprint((await loadAnalyzeInput(id))!),fingerprint);
+ } finally {for(const [key,value] of Object.entries({RESEARCH_BACKFILL_ENABLED:previous.enabled,MODEL_CALLS_ENABLED:previous.model}))value===undefined?delete process.env[key]:process.env[key]=value;await sql`UPDATE articles SET research_backfill_attempted_at=NULL WHERE id=${id}`;}
 });
 test('concurrent legacy enrichment claims enforce the rolling daily cap',async()=>{
  const ids=[];for(let n=20;n<43;n++) ids.push(await record(n));

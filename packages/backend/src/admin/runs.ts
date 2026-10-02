@@ -6,6 +6,7 @@ import { Conflict } from "./sources.ts";
 import { failureGroupSql, queueProcessing, requeueFailed } from "../jobs/content.ts";
 import { CAPABILITIES } from "../editorial/models.ts";
 import { researchBackfillPaused } from "../research/backfill.ts";
+import { RESEARCH_PROCESSING_VERSION } from "../research/material.ts";
 
 const STALE_HEARTBEAT_MS = 3 * 60_000;
 
@@ -59,13 +60,15 @@ export async function runsOverview() {
   const [research] = await sql`SELECT count(*)::int AS total,
     count(*) FILTER(WHERE research_profile->>'status'='ready')::int AS ready,
     count(*) FILTER(WHERE research_profile->>'status'='insufficient')::int AS insufficient,
-    count(*) FILTER(WHERE research_enriched_at IS NULL)::int AS waiting,
+    count(*) FILTER(WHERE research_enriched_at IS NULL OR research_processing_version IS DISTINCT FROM ${RESEARCH_PROCESSING_VERSION} OR research_revision IS DISTINCT FROM revision)::int AS waiting,
+    count(*) FILTER(WHERE research_validation <> '{}'::jsonb)::int AS rejected,
     count(*) FILTER(WHERE research_retry_at IS NOT NULL)::int AS retrying,
     count(*) FILTER(WHERE research_backfill_attempted_at >= now()-interval '24 hours')::int AS attempted,
     pg_database_size(current_database()) AS database_bytes FROM articles`;
   const [modelUsage] = await sql<{requests:number;cost:string|null}[]>`SELECT count(*)::int AS requests,sum(a.cost) AS cost FROM receipt_attempts a JOIN receipts r ON r.id=a.receipt_id WHERE r.purpose='research_backfill' AND a.started_at >= now()-interval '24 hours'`;
+  const rejectedFields = await sql`SELECT e.value AS reason,count(*)::int AS count FROM articles a CROSS JOIN LATERAL jsonb_each_text(a.research_validation) e GROUP BY e.value ORDER BY count(*) DESC LIMIT 12`;
   return {
-    research:{...research,...modelUsage!,paused:await researchBackfillPaused(),pauseReason:(await sql`SELECT value->>'reason' AS reason FROM settings WHERE key='research.backfill.paused'`)[0]?.reason || null},
+    research:{...research,...modelUsage!,rejectedFields,processingVersion:RESEARCH_PROCESSING_VERSION,paused:await researchBackfillPaused(),pauseReason:(await sql`SELECT value->>'reason' AS reason FROM settings WHERE key='research.backfill.paused'`)[0]?.reason || null},
     checkedAt: new Date(now).toISOString(),
     processes: heartbeats.map((h) => ({
       role: h.key.slice("heartbeat.".length),
