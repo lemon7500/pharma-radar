@@ -133,7 +133,8 @@ test('unchanged refreshed material reuses stored extraction; a changed abstract 
  const previous={enabled:process.env.RESEARCH_BACKFILL_ENABLED,model:process.env.MODEL_CALLS_ENABLED};
  try {process.env.RESEARCH_BACKFILL_ENABLED='true';process.env.MODEL_CALLS_ENABLED='true';
  const before=(await sql`SELECT count(*)::int AS n FROM receipts`)[0]!.n;
- const done=await backfillResearch({limit:1,articleIds:[id],enrichMaterial:async()=>{}});assert.equal(done.processed,1);
+ const usedBefore=(await sql`SELECT count(*)::int AS n FROM articles WHERE research_backfill_attempted_at >= now()-interval '24 hours'`)[0]!.n;
+ const done=await backfillResearch({limit:1,articleIds:[id],enrichMaterial:async()=>{}});assert.equal(done.processed,1);assert.equal(done.remainingDailyCapacity,19-usedBefore);
  assert.equal((await sql`SELECT count(*)::int AS n FROM receipts`)[0]!.n,before);
  await sql`UPDATE articles SET research_abstract=${body+' Updated result: 30 percent.'},research_enriched_at=NULL,research_backfill_attempted_at=NULL WHERE id=${id}`;
  assert.notEqual(researchMaterialFingerprint((await loadAnalyzeInput(id))!),fingerprint);

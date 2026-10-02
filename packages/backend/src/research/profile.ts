@@ -58,9 +58,9 @@ const focusPatterns: Record<string, RegExp> = {
   "tcm-natural-products": /traditional Chinese medicine|Chinese herbal|herbal medicine|natural products?|ethnopharmacolog|phytochemic|中药|方剂|药用植物|天然产物/i,
   "ai-pharma": /artificial intelligence|machine learning|deep learning|neural network|AI[- ](?:driven|based)|AI.?药|人工智能|机器学习|深度学习/i,
 };
-const pharmacy = /drug|pharmac|therap|treat(?:ment|ed)|disease|cancer|anti[- ]?(?:tumou?r|inflamm|viral|bacterial)|arthritis|diabet|endometritis|药|治疗|疾病|肿瘤/i;
+const pharmacy = /drug|pharmac|medicine|medicinal|traditional Chinese herb|bioactiv|therap|treat(?:ment|ed)|disease|cancer|anti[- ]?(?:tumou?r|inflamm|viral|bacterial)|arthritis|diabet|endometritis|药|治疗|疾病|肿瘤/i;
 const agricultural = /agrochem|herbicid|crop|weed|insecticid|plant toxicity|food preserv|食品保鲜|除草|农药/i;
-const aiTerms = /artificial intelligence|machine learning|deep learning|neural network|language model|transformer|AI[- ](?:driven|based)|人工智能|机器学习|深度学习|神经网络/i;
+const aiTerms = /artificial intelligence|machine[- ]learning|deep[- ]learning|neural network|language model|transformer|AI[- ](?:driven|based)|人工智能|机器学习|深度学习|神经网络/i;
 const prospectOnly = /\b(?:future|prospect|outlook|potential for|could|may|might|will|promise)\b|展望|未来|有望|可能|建议/i;
 export function focusSupported(focus: string, quote: string, material: ResearchMaterial): boolean {
   const text = `${material.title}\n${material.bodyText || material.excerpt || ""}`;
@@ -93,9 +93,9 @@ export function baselineResearch(material: ResearchMaterial): ResearchProfile {
   };
 }
 const stagePatterns: Record<string, RegExp> = {
-  computational: /\b(?:in silico|computational|molecular docking|machine learning|deep learning|neural network|language model|density functional|virtual screening|simulation|artificial intelligence)\b|计算模拟|分子对接|虚拟筛选|机器学习|人工智能/i,
+  computational: /\b(?:in silico|computational|molecular docking|machine[- ]learning|deep[- ]learning|neural network|language model|transformer|density functional|virtual screening|simulation|artificial intelligence)\b|计算模拟|分子对接|虚拟筛选|机器学习|人工智能/i,
   "in-vitro": /\bin vitro\b|cell (?:line|culture)|cultured cells|[A-Z0-9-]+ cells|体外|细胞系|细胞实验/i,
-  animal: /\b(?:mice|mouse|rats|rat|animal model|zebrafish)\b|小鼠|大鼠|动物模型|斑马鱼/i,
+  animal: /\b(?:mice|mouse|rats|rat|rodent models?|animal model|zebrafish)\b|小鼠|大鼠|动物模型|斑马鱼/i,
   clinical: /\b(?:clinical trial|clinical study|randomi[sz]ed|phase [123iv]+ trial|enrolled patients|participants were)\b|临床试验|随机对照|受试者|患者入组/i,
 };
 const normalized = (v: string) => collapseWhitespace(scientificText(v)).toLowerCase();

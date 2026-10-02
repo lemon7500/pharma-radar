@@ -2,6 +2,8 @@
 返回 JSON 格式的 research 对象。各维度独立，同一论文可归属多个环节、专题和证据阶段。
 每个判断都附 quote：从当前材料逐字复制的原文片段（12–500字符），不得改写、翻译或拼接 quote。材料没有依据时给 null 或 []，不利用外部知识补齐。
 quote 超过 500 字符会被整体拒收。选取完整的短句作为依据，不用超长整段。一个字段只概括该片段支持的事实；结果片段保留比较符号、统计值和限定。数字必须存在于对应 quote 中。
+quote 目标长度为 60–250 字符；每个 claims.text 只写其配对 quote 的信息，不混入其他段落。多项结果无法由一个短片段支持时，选择最核心的一组结果，不把全文各处数字塞入同一字段。元数据已给出文献类型或来源性质时 documentType、origin 可返回 null，由系统读取元数据。
+短片段示例（格式示范，不是本篇材料）：若原文为 “The model achieved 92% balanced accuracy on the capsaicin dataset.”，results 可写“该数据集的平衡准确率为92%。”，quote 使用该句；不能额外写来自另一段的相关系数或外部验证数字。
 areas、foci、evidenceStages 使用 {value,quote} 对象数组。documentType、origin、clinicalPhase 使用 {value,quote} 对象或 null，不直接返回字符串。输出必须是语法完整的 JSON，关闭全部括号，特别是外层对象。
 areas: discovery（药物发现）、mechanisms（药理机制）、formulation-pk（制剂与药代）、translation（临床转化）。
 foci: tcm-natural-products（中药与天然产物）、ai-pharma（AI药物研发）。

@@ -58,6 +58,13 @@ test('cells from mice and patient datasets do not imply animal experiments or cl
  const result=validateResearchExtraction({evidenceStages:[{value:'animal',quote:'We used mouse-derived cells in vitro'},{value:'in-vitro',quote:'We used mouse-derived cells in vitro'},{value:'clinical',quote:'No clinical trial was performed and future clinical studies are needed.'},{value:'computational',quote:'analyzed patient data using a deep learning model'}]},{title:'Drug prediction',bodyText:text,bibliography});assert.deepEqual(result.profile.evidenceStages,['in-vitro','computational']);
  const actual=validateResearchExtraction({evidenceStages:[{value:'animal',quote:'We treated mice in vivo and cultured RAW264.7 cells in vitro.'}]},material);assert.deepEqual(actual.profile.evidenceStages,['animal']);
 });
+test('hyphenated deep-learning and rodent models retain genuine labels; medicinal quality-control has pharmacy relevance',()=>{
+ const text='We developed a deep-learning-based algorithm to quantify spontaneous pain behaviours in mice. Rodent models of spontaneous pain reveal paw licking and flinching.';
+ const q='We developed a deep-learning-based algorithm to quantify spontaneous pain behaviours in mice.';
+ const result=validateResearchExtraction({foci:[{value:'ai-pharma',quote:q}],evidenceStages:[{value:'computational',quote:q},{value:'animal',quote:'Rodent models of spontaneous pain reveal paw licking and flinching.'}]},{title:'Pain measurement',bodyText:text,bibliography});assert.deepEqual(result.profile.foci,['ai-pharma']);assert.deepEqual(result.profile.evidenceStages,['computational','animal']);
+ const herbal='Callicarpa nudiflora, a traditional Chinese medicine, was examined for phytochemical quality control. We compared the composition and metabolic profiles of different extracts.';
+ const natural=validateResearchExtraction({foci:[{value:'tcm-natural-products',quote:'Callicarpa nudiflora, a traditional Chinese medicine'}]},{title:'Herbal quality control',bodyText:herbal,bibliography});assert.deepEqual(natural.profile.foci,['tcm-natural-products']);
+});
 test('review clinical evidence and publisher news preserve their own roles and cannot claim a clinical phase',()=>{
  const text='This review covers randomized phase II clinical trials and their limitations. It discusses drug development and evidence from multiple published studies.';
  const review=validateResearchExtraction({evidenceStages:[{value:'clinical',quote:'This review covers randomized phase II clinical trials'}],clinicalPhase:{value:'II',quote:'This review covers randomized phase II clinical trials'}},{title:'Clinical review',bodyText:text,bibliography:{...bibliography,publicationTypes:['Review']}});

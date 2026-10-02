@@ -81,7 +81,8 @@ export async function backfillResearch(options: { limit?: number; deadline?: num
       }
     }
   }
-  return { processed, failed, remainingDailyCapacity: Math.max(0, limit - processed - failed) };
+  const [daily] = await sql<{ n:number }[]>`SELECT count(*)::int AS n FROM articles WHERE research_backfill_attempted_at >= now() - interval '24 hours'`;
+  return { processed, failed, remainingDailyCapacity: Math.max(0, 20 - daily!.n) };
 }
 
 export function researchPauseReason(databaseBytes:number, consecutiveFailures:number) {
