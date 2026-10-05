@@ -14,7 +14,7 @@ interface Runs {
   modelBudget:{available:boolean;blockedWindow:string|null;retryAt:string|null;remaining:{minute:number;hour:number;day:number}|null};
   research:{rejected:number;rejectedFields:Array<{reason:string;count:number}>;processingVersion:string;total:number;ready:number;insufficient:number;waiting:number;retrying:number;attempted:number;database_bytes:string;requests:number;cost:string|null;paused:boolean;pauseReason:string|null};
   checkedAt: string;
-  processes: Array<{ role: string; pid: number; host: string; release: string; startedAt: string; at: string; alive: boolean }>;
+  processes: Array<{ role: string; pid: number; host: string; release: string; startedAt: string; at: string; alive: boolean; mode?:string; status?:string }>;
   jobs: Row[];
   timeline: Row[];
   queues: Array<{ name: string; state: string; n: number; oldest: string }>;
@@ -59,6 +59,9 @@ export default function RunsAdmin({ loaderData }: Route.ComponentProps) {
   for (const q of r.queues) backlog.set(q.name, { ...(backlog.get(q.name) ?? {}), [q.state]: { n: q.n, oldest: q.oldest } });
   const queued = r.queues.filter((q) => q.state !== "active").reduce((a, q) => a + q.n, 0);
   const worker = r.processes.find((p) => p.role === "worker");
+  const batchState = worker?.mode === 'batch' ? worker.status : null;
+  const workerTone = batchState === 'finished' ? 'muted' : batchState === 'failed' ? 'bad' : worker?.alive ? 'ok' : 'bad';
+  const workerLabel = batchState === 'finished' ? '上轮已结束' : batchState === 'failed' ? '上轮运行失败' : worker ? (worker.alive ? '运行中' : '心跳中断') : '无心跳';
   const failing = r.jobs.filter((j) => j.status === "failed");
 
   return (
@@ -66,8 +69,8 @@ export default function RunsAdmin({ loaderData }: Route.ComponentProps) {
       <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Stat
           label="worker"
-          value={<span className="inline-flex items-center gap-2 text-[18px]"><Dot tone={worker?.alive ? "ok" : "bad"} />{worker ? (worker.alive ? "运行中" : "心跳中断") : "无心跳"}</span>}
-          hint={worker ? `${worker.host} · 心跳 ${ago(worker.at)}` : "worker 未上报心跳"}
+          value={<span className="inline-flex items-center gap-2 text-[18px]"><Dot tone={workerTone} />{workerLabel}</span>}
+          hint={worker ? `${worker.host} · ${batchState ? '上轮结束' : '心跳'} ${ago(worker.at)}` : "worker 未上报心跳"}
         />
         <Stat label="队列积压" value={num(queued)} tone={queued > 500 ? "warn" : undefined} hint="排队与等待重试" />
         <Stat label="失败的定时任务" value={num(failing.length)} tone={failing.length ? "bad" : "ok"} hint="最近一次运行失败" />
@@ -283,7 +286,7 @@ export default function RunsAdmin({ loaderData }: Route.ComponentProps) {
           <ul className="grid gap-2 text-[13px] sm:grid-cols-2 lg:grid-cols-3">
             {r.processes.map((p) => (
               <li key={p.role} className="flex items-center gap-2">
-                <Dot tone={p.alive ? "ok" : "bad"} />
+                <Dot tone={p.mode==='batch' && p.status==='finished' ? 'muted' : p.mode==='batch' && p.status==='failed' ? 'bad' : p.alive ? "ok" : "bad"} />
                 <span className="font-medium">{p.role}</span>
                 <span className="text-ink-3">{p.host} · pid {p.pid} · {p.release} · 启动于 {bj(p.startedAt)}</span>
               </li>
