@@ -11,6 +11,7 @@ import { itemUrl } from "./links.ts";
 import { enqueue, QUEUES, shutdownSignal } from "../jobs/queue.ts";
 import { normalizeBibliography, supportedStoredResearch } from "../research/profile.ts";
 import { scientificText } from "../research/material.ts";
+import { editorialResearchMaterial, effectiveResearchMaterial, withResearchMaterialSources } from "../research/editorial-material.ts";
 import type { Bibliography, ResearchProfile } from "@aihot/contracts/research";
 import {
   bodyModeOf, channelOf, displayTags, isIndexable, isPoolEligible, isSelectable, mayRedistribute, type SourceFacts,
@@ -35,6 +36,7 @@ interface ArticleRow {
   backfill: boolean;
   body_status: string;
   body_text: string | null;
+  excerpt: string | null;
   x_post: unknown;
   grouped_at: Date | null;
 }
@@ -159,7 +161,7 @@ export async function publishArticle(articleId: string, options: PublishOptions 
 export async function publishArticleTx(tx: Tx, articleId: string, options: PublishOptions = {}): Promise<PublishResult | null> {
   const [article] = await tx<ArticleRow[]>`
     SELECT id, revision, bibliography, research_profile, research_support, research_revision, research_material_kind, canonical_article_id, source_id, url, title, language, published_at, discovered_at, timeline_at, backfill, body_status,
-           coalesce(research_abstract,body_text) AS body_text, x_post, grouped_at
+           coalesce(research_abstract,body_text) AS body_text, excerpt, x_post, grouped_at
     FROM articles WHERE id = ${articleId} FOR UPDATE`;
   if (!article) return null;
   // Reports take this lock exclusively while reading candidates. Hold it through commit so a
@@ -181,11 +183,14 @@ export async function publishArticleTx(tx: Tx, articleId: string, options: Publi
   const [previous] = await tx<PublicationRow[]>`SELECT * FROM publications WHERE article_id = ${articleId}`;
 
   const f = override?.fields ?? {};
-  const research = supportedStoredResearch(
+  const editorial = editorialResearchMaterial(f.researchMaterial);
+  const material = effectiveResearchMaterial({ title: article.title, bodyText: article.body_text, excerpt: article.excerpt,
+    bibliography: normalizeBibliography(f.researchBibliography ?? article.bibliography), materialKind: article.research_material_kind ?? undefined }, editorial);
+  const research = withResearchMaterialSources(supportedStoredResearch(
     f.research ?? (article.research_revision === article.revision ? article.research_profile : null),
     f.research ? f.researchSupport : article.research_support,
-    { title: article.title, bodyText: article.body_text, bibliography: normalizeBibliography(f.researchBibliography ?? article.bibliography), materialKind: article.research_material_kind ?? undefined },
-  );
+    material,
+  ), editorial);
   const isChineseTitle = article.language === "zh" || /[一-鿿]/.test(article.title);
   // An X post carries its Chinese in the summary and translation; without a Chinese title its own
   // text is the title, where an article would still be a half-finished card.

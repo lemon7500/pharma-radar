@@ -21,24 +21,43 @@ export function AdminResearchPanel({ article,publication,override,base }: {artic
   const {run,pending} = useAdminAction(); const [open,setOpen] = useState(false); const [retry,setRetry] = useState(false);
   const [metadata,setMetadata] = useState<Bibliography>(profile?.bibliography || article.bibliography || emptyBibliography);
   const [structure,setStructure] = useState(""); const [error,setError] = useState("");
-  const edit = () => { setMetadata(profile?.bibliography || article.bibliography || emptyBibliography);setStructure(JSON.stringify(paired(profile,support),null,2));setError("");setOpen(true); };
+  const [useMaterial,setUseMaterial] = useState(false);
+  const [materialKind,setMaterialKind] = useState<"fulltext"|"abstract-supplement">("abstract-supplement");
+  const [materialText,setMaterialText] = useState(""); const [materialSources,setMaterialSources] = useState("[]");
+  const edit = () => {
+    setMetadata(profile?.bibliography || article.bibliography || emptyBibliography);setStructure(JSON.stringify(paired(profile,support),null,2));
+    const material = override?.fields?.researchMaterial;
+    setUseMaterial(!!material);setMaterialKind(material?.kind || "abstract-supplement");setMaterialText(material?.text || "");setMaterialSources(JSON.stringify(material?.sources || [],null,2));
+    setError("");setOpen(true);
+  };
   return <div className="mb-5"><Card title="文献与研究结构" right={<div className="flex gap-2"><Button size="sm" onClick={edit}>修正文献与导读</Button><Button size="sm" onClick={() => setRetry(true)}>重试研究整理</Button></div>}>
     <div className="mb-3 flex flex-wrap gap-2"><Badge>{profile ? researchBasisLabel(profile) : "待整理"}</Badge><Badge>{profile?.status === "ready" ? "导读已整理" : profile?.status === "insufficient" ? "材料不足，暂停深入导读" : "研究结构待整理"}</Badge>{article.research_retry_at && <Badge tone="warn">等待重试</Badge>}{article.canonical_article_id && <Badge>重复 DOI · 保留旧入口</Badge>}</div>
     <p className="mb-3 text-[12px] text-ink-3">处理版本：{article.research_processing_version || "旧版本"} · 材料指纹：{article.research_material_fingerprint?.slice(0,12) || "待记录"}</p><Json value={article.research_validation} label="字段拒收原因（仅后台）" /><Json value={profile} label="公开研究结构" /><Json value={support} label="来源依据（仅后台）" />
     <details className="mt-3 text-[12px]"><summary className="cursor-pointer py-2 text-accent">查看已获取材料</summary><pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap rounded-control bg-bg-sunk p-3 leading-relaxed">{article.title}{"\n\n"}{article.research_material || "没有获取摘要或正文"}</pre></details>
+    {override?.fields?.researchMaterial && <details className="mt-3 text-[12px]"><summary className="cursor-pointer py-2 text-accent">查看人工补核材料（仅后台）</summary><pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap rounded-control bg-bg-sunk p-3 leading-relaxed">{override.fields.researchMaterial.text}</pre></details>}
     <p className="mt-3 text-[12px] leading-relaxed text-ink-3">元数据请核对来源原文；研究阶段与结论必须附已获取材料中的逐字片段。人工修正记录原因、版本和来源依据，重新评估不会覆盖。</p>
   </Card>
-  <ReasonDialog open={open} title="修正文献与研究导读" description="文献元数据来自原文核对。下方研究结构使用 value／quote 或 text／quote 配对，quote 必须出现在上方已获取材料中；没有依据的字段留空。" confirmLabel="验证并发布" busy={pending === "research-edit"} onClose={() => setOpen(false)} onSubmit={async reason => {
+  <ReasonDialog open={open} title="修正文献与研究导读" description="文献元数据来自原文核对。下方研究结构使用 value／quote 或 text／quote 配对，quote 必须出现在已获取材料或本次补核材料中；没有依据的字段留空。" confirmLabel="验证并发布" busy={pending === "research-edit"} onClose={() => setOpen(false)} onSubmit={async reason => {
     try {
       const parsed = JSON.parse(structure);setError("");
-      return (await run("POST",`${base}/override`,{fields:{research:parsed,researchBibliography:metadata},version:override?.version || 0,reason},{label:"research-edit",success:"文献与研究结构已验证、审计并重新发布"})) !== null;
-    } catch {setError("研究结构 JSON 格式无效，请检查引号与逗号。");return false;}
+      const researchMaterial = useMaterial ? {kind:materialKind,text:materialText,sources:JSON.parse(materialSources)} : null;
+      return (await run("POST",`${base}/override`,{fields:{research:parsed,researchBibliography:metadata,researchMaterial},version:override?.version || 0,reason},{label:"research-edit",success:"文献与研究结构已验证、审计并重新发布"})) !== null;
+    } catch {setError("研究结构或来源链接 JSON 格式无效，请检查引号与逗号。");return false;}
   }}>
     <Field label="DOI"><Input value={metadata.doi || ""} onChange={e => setMetadata({...metadata,doi:e.target.value.trim().toLowerCase() || null})} /></Field>
     <Field label="PMID"><Input value={metadata.pmid || ""} onChange={e => setMetadata({...metadata,pmid:e.target.value.trim() || null})} /></Field>
     <Field label="作者（每行一位，保持来源顺序）"><Textarea rows={3} value={metadata.authors.join("\n")} onChange={e => setMetadata({...metadata,authors:e.target.value.split("\n").map(v=>v.trim()).filter(Boolean)})} /></Field>
     <Field label="期刊"><Input value={metadata.journal || ""} onChange={e => setMetadata({...metadata,journal:e.target.value || null})} /></Field>
     <Field label="发表日期"><Input type="date" value={metadata.publishedDate || ""} onChange={e => setMetadata({...metadata,publishedDate:e.target.value || null})} /></Field>
+    <label className="my-3 flex min-h-11 items-center gap-2 text-[13px]"><input type="checkbox" checked={useMaterial} onChange={e => setUseMaterial(e.target.checked)} />使用人工补核材料验证研究字段</label>
+    {useMaterial && <div className="space-y-3 rounded-control border border-line p-3">
+      <Field label="已核对范围"><select className="min-h-11 w-full rounded-control bg-bg-sunk p-2" value={materialKind} onChange={e => setMaterialKind(e.target.value as typeof materialKind)}><option value="abstract-supplement">摘要与补充材料（未核对正文）</option><option value="fulltext">原文全文</option></select></Field>
+      <p className="text-[12px] leading-relaxed text-ink-3">粘贴实际核对的原文文本，保留图号和上下文；摘要与补充材料应一起保存。图片图注须按原文转录。材料文本与引用片段仅保存在后台，公开页面只显示材料范围和来源链接。</p>
+      <p className="text-[12px] leading-relaxed text-ink-3">新增或更换材料内容会撤回旧概要、推荐理由与精选状态；研究结构验证通过后，先展示结构化概要，再复核并重新设置推荐。</p>
+      <Field label="补核材料文本"><Textarea rows={8} maxLength={250000} value={materialText} onChange={e => setMaterialText(e.target.value)} /></Field>
+      <Field label="公开来源链接 JSON（每条包含 label 和 url）"><Textarea rows={5} className="font-mono text-[12px]" value={materialSources} onChange={e => setMaterialSources(e.target.value)} placeholder={'[{"label":"出版商摘要","url":"https://example.org/article"}]'} /></Field>
+    </div>}
+    {!useMaterial && override?.fields?.researchMaterial && <p className="text-[12px] text-hot">保存将移除补核材料，并按原始采集材料重新验证；请同时移除已失去依据的研究字段。</p>}
     <div className="rounded-control bg-bg-sunk p-3 text-[11px] leading-relaxed text-ink-3">{FACET_GROUPS.map(g => <p key={g.param}>{g.label}：{g.values.map(v => `${v.key}（${v.label}）`).join("；")}</p>)}<p>研究字段：areas、foci、documentType、evidenceStages、origin、clinicalPhase；claims 包含 object、question、methods、results、limitations。</p></div>
     <Field label="研究结构与来源依据 JSON"><Textarea rows={14} className="font-mono text-[12px]" value={structure} onChange={e => setStructure(e.target.value)} /></Field>{error && <p role="alert" className="text-hot">{error}</p>}
   </ReasonDialog>

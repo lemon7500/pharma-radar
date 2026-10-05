@@ -27,7 +27,13 @@ export function ResearchDetail({ item }: { item:SiteItemDetail }) {
     <header className="research-title"><div className="record-meta"><span>{b?.journal || item.source.name}</span><span>{form}</span>{b?.isPreprint && <span>预印本 · 尚未确认同行评议</span>}</div><h1>{item.title}</h1>{item.originalTitle && item.originalTitle !== item.title && <p className="original-title" lang="en">{item.originalTitle}</p>}<div className="record-meta mb-3"><time dateTime={time.date || undefined}>{publicationLabel(time)} · 发表</time><span>{SOURCE_ORIGINS.find(v => v.key === r?.origin)?.label || "来源属性待确认"}</span><span>{r ? researchBasisLabel(r) : "材料范围待整理"}</span></div><ResearchTags item={item} />{actions}<p className="reading-message" role="status">{message}</p></header>
     <div className="reading-layout"><div className="reading-content">
       {item.canonicalId && <p className="mb-6 text-[13px] text-ink-3">同一 DOI 的资料已归并，当前旧入口继续保留。<Link className="text-accent" to={`/items/${item.canonicalId}`}>查看主记录 →</Link></p>}
-      <section className="material-scope" aria-labelledby="scope-title"><h2 id="scope-title">本篇导读的材料范围</h2><strong>{r ? researchBasisLabel(r) : "材料范围待整理"}</strong><p>{ready ? "下方研究信息从已获取材料中整理；不能替代阅读全文和评价研究质量。未填局限表示当前材料未交代，不表示研究没有局限。" : r?.status === "insufficient" ? "当前仅获取标题、过短内容或参考文献列表，暂不生成深入导读。保留文献索引与原文入口，研究方法、结果和证据阶段待确认。" : "已核对的研究信息在下方展示，导读尚未满足基本完整度。缺少依据的字段保留为空，请结合原文核对。"}</p></section>
+      <section className="material-scope" aria-labelledby="scope-title">
+        <h2 id="scope-title">本篇导读的材料范围</h2>
+        <strong>{r ? researchBasisLabel(r) : "材料范围待整理"}</strong>
+        {r?.materialKind === "abstract-supplement" && <p>已核对公开摘要与补充材料，尚未核对论文正文。补充材料中的实验信息不能替代完整的方法与结果。</p>}
+        <p>{ready ? "下方研究信息从已获取材料中整理；不能替代阅读全文和评价研究质量。未填局限表示当前材料未交代，不表示研究没有局限。" : r?.status === "insufficient" ? "当前仅获取标题、过短内容或参考文献列表，暂不生成深入导读。保留文献索引与原文入口，研究方法、结果和证据阶段待确认。" : "已核对的研究信息在下方展示，导读尚未满足基本完整度。缺少依据的字段保留为空，请结合原文核对。"}</p>
+        {!!r?.materialSources?.length && <ul className="material-source-links" aria-label="已核对的来源材料">{r.materialSources.map(s => <li key={s.url}><a href={s.url} target="_blank" rel="noopener noreferrer">{s.label} ↗</a></li>)}</ul>}
+      </section>
       {ready && item.summary && <section className="research-abstract"><h2>阅读概要</h2><p>{item.summary}</p></section>}
       {ready && item.reason && <aside className="reading-significance"><h2>为什么值得读</h2><p>{item.reason}</p></aside>}
       <div className="research-claim-sections">{present.map(c => <section id={`research-${c.key}`} key={c.key}><h2>{r?.documentType === "review" && c.key === "results" ? "综述要点" : c.label}</h2><p>{r!.claims[c.key]}</p></section>)}{!!missing.length && <section id="research-missing"><h2>待核对的信息</h2><p className="claim-missing">{missing.map(c => c.label).join("、")}：已获取材料未提供足够依据，请结合原文核对。</p></section>}</div>

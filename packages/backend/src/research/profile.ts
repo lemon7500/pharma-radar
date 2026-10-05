@@ -205,8 +205,13 @@ export function publicResearch(value: unknown, fallback: ResearchProfile): Resea
 
 /** Recheck stored/editorial quotes whenever the projection is rebuilt, including source updates. */
 export function supportedStoredResearch(value: unknown, evidence: unknown, material: ResearchMaterial): ResearchProfile {
+  return validateStoredResearch(value, evidence, material).profile;
+}
+
+/** Material changes also discard obsolete private quotes, rather than keeping stale support. */
+export function validateStoredResearch(value: unknown, evidence: unknown, material: ResearchMaterial) {
   const v = record(value), quotes = record(evidence);
-  if (v.version !== 1) return baselineResearch(material);
+  if (v.version !== 1) return validateResearchExtraction(undefined, material);
   const extraction: Record<string, unknown> = {};
   for (const field of ["areas", "foci", "evidenceStages"] as const) {
     extraction[field] = strings(v[field], 8).map(value => ({ value, quote: quotes[`${field}.${value}`] }));
@@ -215,7 +220,7 @@ export function supportedStoredResearch(value: unknown, evidence: unknown, mater
     extraction[field] = { value: v[field], quote: quotes[field] };
   }
   extraction.claims = Object.fromEntries(RESEARCH_CLAIMS.map(c => [c.key, { text: record(v.claims)[c.key], quote: quotes[`claims.${c.key}`] }]));
-  return validateResearchExtraction(extraction, material).profile;
+  return validateResearchExtraction(extraction, material);
 }
 
 /** Admin corrections use the same evidence gate and fail visibly instead of dropping invalid edits. */

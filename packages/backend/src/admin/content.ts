@@ -15,7 +15,8 @@ import { mergeStoryInto } from "../events/merge.ts";
 import { latestHotRanking } from "../events/hot-read.ts";
 import { audit } from "./auth.ts";
 import { Conflict } from "./sources.ts";
-import { normalizeBibliography, validateAdminResearch } from "../research/profile.ts";
+import { normalizeBibliography, validateAdminResearch, validateStoredResearch } from "../research/profile.ts";
+import { EditorialResearchMaterialSchema, editorialResearchMaterial, effectiveResearchMaterial, withResearchMaterialSources } from "../research/editorial-material.ts";
 import { reconcileResearchDoi } from "../research/enrich.ts";
 
 async function republishResearchFamily(id:string) {
@@ -143,6 +144,7 @@ const FieldsSchema = z
     selected: z.boolean(),
     silent: z.boolean(),
     research: z.unknown(),
+    researchMaterial: EditorialResearchMaterialSchema.nullable(),
     researchBibliography: z.object({
       doi:z.string().nullable(), pmid:z.string().nullable(), authors:z.array(z.string().max(200)).max(50), journal:z.string().max(300).nullable(),
       publishedDate:z.string().nullable(), publicationTypes:z.array(z.string().max(200)).max(10), isPreprint:z.boolean().nullable(),
@@ -163,15 +165,37 @@ export async function overrideFields(id: string, input: { fields: unknown; clear
     if (JSON.stringify(normalized) !== JSON.stringify(fields.researchBibliography)) throw Object.assign(new Error("文献元数据格式无效，请核对 DOI、日期与字段内容"), { statusCode:400 });
     next.researchBibliography = normalized;
   }
-  if (fields.research !== undefined) {
-    const [a] = await sql`SELECT title, coalesce(research_abstract,body_text) AS body_text, excerpt, bibliography, research_material_kind FROM articles WHERE id = ${id}`;
-    if (!a) throw Object.assign(new Error("article not found"),{statusCode:404});
-    const result = validateAdminResearch(fields.research, { title:a.title, bodyText:a.body_text, excerpt:a.excerpt, bibliography:normalizeBibliography(next.researchBibliography ?? a.bibliography), materialKind:a.research_material_kind ?? undefined });
-    next.research = result.profile;
-    next.researchSupport = result.support;
+  for (const k of input.clear ?? []) delete next[k];
+  if (fields.researchMaterial === null) delete next.researchMaterial;
+  const previousMaterial = editorialResearchMaterial(before.fields.researchMaterial);
+  const editorial = editorialResearchMaterial(next.researchMaterial);
+  const materialEvidenceChanged = previousMaterial?.kind !== editorial?.kind || previousMaterial?.text !== editorial?.text;
+  if (materialEvidenceChanged) {
+    // Free-form editorial conclusions cannot be checked against quotations. Require a fresh edit
+    // with changed evidence, otherwise return to the revalidated structured summary and unselect.
+    for (const field of ["summary", "reason"] as const) if (fields[field] === undefined) delete next[field];
+    if (fields.selected === undefined || input.clear?.includes("selected")) next.selected = false;
   }
-  for (const k of input.clear ?? []) delete (next as Record<string, unknown>)[k];
-  if (input.clear?.includes("research")) delete next.researchSupport;
+  const clearsResearch = input.clear?.includes("research") === true;
+  if (clearsResearch) delete next.researchSupport;
+  const editsResearch = fields.research !== undefined && !clearsResearch;
+  const materialChanged = fields.researchMaterial !== undefined || input.clear?.includes("researchMaterial");
+  const bibliographyChanged = fields.researchBibliography !== undefined || input.clear?.includes("researchBibliography");
+  if (editsResearch || materialChanged || bibliographyChanged) {
+    const [a] = await sql`SELECT title, coalesce(research_abstract,body_text) AS body_text, excerpt, bibliography, research_material_kind,
+      revision, research_revision, research_profile, research_support FROM articles WHERE id = ${id}`;
+    if (!a) throw Object.assign(new Error("article not found"),{statusCode:404});
+    const material = effectiveResearchMaterial({ title:a.title, bodyText:a.body_text, excerpt:a.excerpt,
+      bibliography:normalizeBibliography(next.researchBibliography ?? a.bibliography), materialKind:a.research_material_kind ?? undefined }, editorial);
+    const result = editsResearch ? validateAdminResearch(fields.research, material)
+      : validateStoredResearch(next.research ?? (a.research_revision === a.revision ? a.research_profile : null),
+        next.research ? next.researchSupport : a.research_support, material);
+    // Metadata-only edits must not freeze a model extraction into an editorial override.
+    if (!clearsResearch && (editsResearch || materialEvidenceChanged || next.research !== undefined)) {
+      next.research = withResearchMaterialSources(result.profile, editorial);
+      next.researchSupport = result.support;
+    }
+  }
   const written = await sql`
     INSERT INTO editorial_overrides (article_id, fields, reason, version, updated_by) VALUES (${id}, ${sql.json(next as never)}, ${input.reason}, 1, ${actor})
     ON CONFLICT (article_id) DO UPDATE SET fields = EXCLUDED.fields, reason = EXCLUDED.reason, version = editorial_overrides.version + 1, updated_by = EXCLUDED.updated_by, updated_at = now()

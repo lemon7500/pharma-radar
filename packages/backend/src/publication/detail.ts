@@ -182,7 +182,11 @@ export async function exportMarkdown(id: string): Promise<{ filename: string; bo
       `- ${r.documentType === "review" ? "涵盖的证据" : "证据阶段"}：${EVIDENCE_STAGES.filter(v => r.evidenceStages.includes(v.key)).map(v => v.label).join("／") || "待确认"}`, "",
       "## 材料范围", "", researchBasisLabel(r), "",
       r.status === "ready" ? "根据已获取材料整理，请核对来源原文。" : "材料不足或研究结构待整理，暂不生成深入导读。", "");
+    if (r.materialKind === "abstract-supplement") lines.push("已核对公开摘要与补充材料，尚未核对论文正文。补充材料中的实验信息不能替代完整的方法与结果。", "");
+    for (const source of r.materialSources || []) lines.push(`- 已核对材料：[${source.label.replace(/[\\\[\]\r\n]/g, " ")}](<${source.url.replace(/[<>\r\n]/g, c => encodeURIComponent(c))}>)`);
+    if (r.materialSources?.length) lines.push("");
     if (r.status === "ready" && row.summary) lines.push("## 阅读概要", "", row.summary, "");
+    if (r.status === "ready" && row.reason) lines.push("## 为什么值得读", "", row.reason, "");
     for (const c of RESEARCH_CLAIMS) lines.push(`## ${r.documentType === "review" && c.key === "results" ? "综述要点" : c.label}`, "", r.claims[c.key] || "已获取材料未提供足够依据。", "");
   } else {
     if (row.summary) lines.push("## 摘要", "", row.summary, "");
