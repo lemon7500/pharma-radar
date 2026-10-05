@@ -3,6 +3,7 @@ import type { PgBoss } from "pg-boss";
 import { groupArticle } from "../events/group.ts";
 import { composeStoryDigest } from "../events/digest.ts";
 import { BudgetExceededError, ReceiptBusyError } from "../providers/receipts.ts";
+import { deferEventJob } from "./event-deferrals.ts";
 import { settleNonEditorial } from "./content.ts";
 import { ensureQueue, enqueue, QUEUES } from "./queue.ts";
 
@@ -20,13 +21,18 @@ export async function registerEventJobs(boss: PgBoss) {
       }
       return result;
     } catch (error) {
-      if (error instanceof BudgetExceededError || error instanceof ReceiptBusyError) throw error;
+      if (error instanceof BudgetExceededError || error instanceof ReceiptBusyError) return deferEventJob(QUEUES.group, job.data, error, { sourceJobId: job.id });
       throw error;
     }
   });
   await ensureQueue(QUEUES.digest);
-  await boss.work<{ storyId: number; afterCorrection?: boolean }>(QUEUES.digest, { localConcurrency: 3, pollingIntervalSeconds: 5 }, async ([job]) => {
+  await boss.work<{ storyId: number; afterCorrection?: boolean }>(QUEUES.digest, { localConcurrency: 1, pollingIntervalSeconds: 5 }, async ([job]) => {
     if (!job) return;
-    return composeStoryDigest(job.data.storyId, { afterCorrection: job.data.afterCorrection });
+    try {
+      return await composeStoryDigest(job.data.storyId, { afterCorrection: job.data.afterCorrection });
+    } catch (error) {
+      if (error instanceof BudgetExceededError || error instanceof ReceiptBusyError) return deferEventJob(QUEUES.digest, job.data, error, { sourceJobId: job.id });
+      throw error;
+    }
   });
 }

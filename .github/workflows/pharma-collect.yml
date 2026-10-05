@@ -45,4 +45,5 @@ jobs:
           node-version: '24.13.0'
           cache: npm
       - run: npm ci --no-audit --no-fund
+      - run: node scripts/migrate.ts
       - run: node deploy/batch-worker.ts

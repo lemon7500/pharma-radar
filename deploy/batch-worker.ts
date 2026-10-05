@@ -18,6 +18,9 @@ import { dailyRetention } from "@aihot/backend/operations/retention";
 import { autoReleaseUnknownReceipts } from "@aihot/backend/admin/runs";
 import { markStalePendingReceipts } from "@aihot/backend/providers/receipts";
 import { backfillResearch } from "@aihot/backend/research/backfill";
+import { readServiceBudget } from "@aihot/backend/providers/budget";
+import { importLegacyEventDeferrals, recoverDeferredEventJobs } from "@aihot/backend/jobs/event-deferrals";
+import { ARTICLE_QUEUES, EVENT_QUEUES, pendingPriorityWork, runWithBudgetWaiting } from "@aihot/backend/jobs/priority";
 
 assertProductionSecrets([["auth", "IMG_PROXY_SIGN_SECRET"]]);
 const maximumMinutes = Number(process.env.BATCH_MAX_MINUTES || 20);
@@ -38,34 +41,58 @@ process.on("SIGTERM",()=>void shutdown());process.on("SIGINT",()=>void shutdown(
 // Leave time for the existing 195 s graceful shutdown before Actions' job timeout.
 const hardStop = setTimeout(()=>void shutdown(), maximumMinutes * 60_000);
 hardStop.unref();
+async function drain(names: string[]) {
+  let quiet = 0, lastSweep = Date.now();
+  while (Date.now() < deadline - 240_000 && quiet < 3) {
+    if (names.includes('content.analyze') && Date.now()-lastSweep >= 30_000) {
+      await sweepUnprocessed();
+      lastSweep = Date.now();
+    }
+    quiet = await pendingPriorityWork(names) === 0 ? quiet + 1 : 0;
+    await delay(10_000);
+  }
+  return await pendingPriorityWork(names) === 0;
+}
 try {
   const boss = await getBoss();
   // Disable legacy continuous schedules; this deployment explicitly runs the finite stages below.
   for (const scheduled of await boss.getSchedules()) if (scheduled.name.startsWith("cron.")) await boss.unschedule(scheduled.name);
   await registerContentJobs(boss);
   if (process.env.COLLECT_ENABLED !== "false") await registerSourceJobs(boss);
-  await registerEventJobs(boss);
   await registerNotifyJobs(boss);
   await registerPublicationJobs(boss);
   heartbeat = startHeartbeat("worker");
   await recordRun("batch.recover", async()=>({stale:await markStalePendingReceipts(),released:await autoReleaseUnknownReceipts()}));
   if (process.env.COLLECT_ENABLED !== "false") await recordRun("sources.schedule",scheduleDueSources);
   await recordRun("content.sweep",sweepUnprocessed);
-  let quiet = 0;
-  while (Date.now() < deadline - 240_000 && quiet < 3) {
-    const [row] = await sql<{n:number}[]>`SELECT count(*)::int AS n FROM pgboss.job WHERE state IN ('created','retry','active') AND start_after <= now() + interval '90 seconds'`;
-    quiet = row.n === 0 ? quiet + 1 : 0;
-    await delay(10_000);
+  // Queue priorities only apply within one queue. Register model-consuming event handlers
+  // after new material is processed, so event digests do not take its remaining allowance.
+  const articlesDrained = await drain(ARTICLE_QUEUES);
+  await recordRun("events.recover", async () => ({
+    legacy: await importLegacyEventDeferrals(),
+    deferred: articlesDrained && Date.now() < deadline - 240_000
+      ? await recoverDeferredEventJobs({budget:readServiceBudget})
+      : {waiting:true,reason:"priority-work"},
+  }));
+  if (articlesDrained && Date.now() < deadline - 240_000) {
+    await registerEventJobs(boss);
+    await drain([...ARTICLE_QUEUES,...EVENT_QUEUES]);
   }
   if (Date.now() < deadline - 240_000) {
     await recordRun("hot.rank",computeHotRanking);
     await recordRun("hot.snapshot",snapshotHeat);
     await recordRun("stories.status",refreshStoryStatuses);
     await recordRun("stories.links",linkRelatedStories);
-    if (process.env.MODEL_CALLS_ENABLED === "true") await recordRun("reports.catch-up",()=>catchUpReports());
+    if (process.env.MODEL_CALLS_ENABLED === "true") await recordRun("reports.catch-up", async () =>
+      await pendingPriorityWork([...ARTICLE_QUEUES,...EVENT_QUEUES])
+        ? {waiting:true,reason:"priority-work"}
+        : runWithBudgetWaiting(()=>catchUpReports()));
   }
   const [retention] = await sql<{at:Date|null}[]>`SELECT max(finished_at) AS at FROM job_runs WHERE job='ops.retention' AND status='ok'`;
-  if (Date.now() < deadline - 240_000) await recordRun("research.backfill", () => backfillResearch({ deadline, limit: Number(process.env.RESEARCH_BACKFILL_LIMIT || 20) }));
+  if (Date.now() < deadline - 240_000) await recordRun("research.backfill", async () =>
+    await pendingPriorityWork([...ARTICLE_QUEUES,...EVENT_QUEUES])
+      ? {waiting:true,reason:"priority-work"}
+      : backfillResearch({ deadline, limit: Number(process.env.RESEARCH_BACKFILL_LIMIT || 20) }));
   if (!retention.at || Date.now()-retention.at.getTime()>86400_000) await recordRun("ops.retention",()=>dailyRetention());
   const [size] = await sql<{bytes:number}[]>`SELECT pg_database_size(current_database()) AS bytes`;
   console.log(JSON.stringify({stage:"batch.finished",databaseBytes:size.bytes,warning:size.bytes>400_000_000 ? "database-near-free-limit" : null}));

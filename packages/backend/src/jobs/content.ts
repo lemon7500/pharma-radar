@@ -211,7 +211,7 @@ export async function registerExtractionJobs(boss: PgBoss) {
 export async function sweepUnprocessed(): Promise<{ enqueued: number }> {
   const rows = await sql<{ id: string }[]>`
     SELECT id FROM articles
-    WHERE processing_state = 'new' AND created_at < now() - interval '3 minutes'
+    WHERE processing_state = 'new' AND (created_at < now() - interval '3 minutes' OR processing_retry_at IS NOT NULL)
       AND (processing_retry_at IS NULL OR processing_retry_at <= now())
       AND (processing_queued_at IS NULL OR processing_queued_at < now() - ${QUEUED_STALE}::interval)
     ORDER BY discovered_at DESC LIMIT 500`;

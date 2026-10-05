@@ -5,14 +5,19 @@ import { modelFor } from "../editorial/models.ts";
 import { promptText, promptVersion } from "../editorial/prompts.ts";
 import { chatJson } from "../providers/llm.ts";
 import { completeReceipt } from "../providers/receipts.ts";
-import { BudgetExceededError } from "../providers/receipts.ts";
+import { BudgetExceededError, ReceiptBusyError } from "../providers/receipts.ts";
+import { readServiceBudget } from "../providers/budget.ts";
 import { audit } from "../admin/auth.ts";
 import { publishArticle } from "../publication/publish.ts";
 import { normalizeBibliography, validateResearchExtraction } from "./profile.ts";
 import { enrichResearchMaterial, reconcileResearchDoi } from "./enrich.ts";
 import { RESEARCH_PROCESSING_VERSION, researchMaterialFingerprint } from "./material.ts";
 
-export async function backfillResearch(options: { limit?: number; deadline?: number; articleIds?: string[]; enrichMaterial?: typeof enrichResearchMaterial } = {}) {
+export interface ResearchBackfillResult {
+  processed:number; failed:number; disabled?:boolean; waiting?:boolean; deferred?:number;
+  reason?:string; remainingDailyCapacity?:number;
+}
+export async function backfillResearch(options: { limit?: number; deadline?: number; articleIds?: string[]; enrichMaterial?: typeof enrichResearchMaterial } = {}): Promise<ResearchBackfillResult> {
   if (process.env.RESEARCH_BACKFILL_ENABLED !== "true" || process.env.MODEL_CALLS_ENABLED !== "true" || await researchBackfillPaused()) return { processed: 0, failed: 0, disabled: true };
   const [storage] = await sql<{bytes:number}[]>`SELECT pg_database_size(current_database()) AS bytes`;
   if (researchPauseReason(Number(storage!.bytes),0)) {
@@ -30,11 +35,11 @@ export async function backfillResearch(options: { limit?: number; deadline?: num
     AND (a.research_backfill_attempted_at IS NULL OR a.research_backfill_attempted_at < now() - interval '24 hours')
     AND (a.research_retry_at IS NULL OR a.research_retry_at <= now())
     ORDER BY a.discovered_at DESC, a.id LIMIT ${limit}`;
-  let processed = 0, failed = 0, consecutiveFailures = 0;
+  let processed = 0, failed = 0, waiting = 0, consecutiveFailures = 0;
   for (const row of rows) {
     if (await researchBackfillPaused()) break;
     if (options.deadline && Date.now() > options.deadline - 150_000) break;
-    if (!await claimResearchBackfill(row.id)) continue;
+    let claimedAt: Date | null = null;
     try {
       await (options.enrichMaterial ?? enrichResearchMaterial)(row.id);
       const input = await loadAnalyzeInput(row.id);
@@ -43,6 +48,9 @@ export async function backfillResearch(options: { limit?: number; deadline?: num
       const [previous] = await sql`SELECT research_processing_version,research_material_fingerprint,research_profile,research_support,research_validation FROM articles WHERE id=${row.id}`;
       const unchanged = previous?.research_processing_version === RESEARCH_PROCESSING_VERSION && previous.research_material_fingerprint === fingerprint && previous.research_profile;
       const baseline = validateResearchExtraction(undefined,input);
+      // Free material refresh does not reserve a daily model-processing slot.
+      claimedAt = await claimResearchBackfillAt(row.id);
+      if (!claimedAt) continue;
       let profile = unchanged ? previous.research_profile : baseline.profile, support = unchanged ? previous.research_support || {} : baseline.support, rejections = unchanged ? previous.research_validation || {} : baseline.rejections, receiptId: number | null = null;
       if (!unchanged && profile.status !== "insufficient" && process.env.MODEL_CALLS_ENABLED === "true") {
         const res = await chatJson({ model: await modelFor("structure"), purpose: "research_backfill", subject: `article:${row.id}@${input.revision}`,
@@ -68,12 +76,20 @@ export async function backfillResearch(options: { limit?: number; deadline?: num
       processed++;
       consecutiveFailures = 0;
     } catch (error) {
+      if (error instanceof BudgetExceededError || error instanceof ReceiptBusyError) {
+        const retryAt = error instanceof BudgetExceededError
+          ? (await readServiceBudget(error.service)).retryAt ?? new Date(Date.now()+3_600_000)
+          : new Date(Date.now()+60_000);
+        if (claimedAt) await releaseResearchBackfillClaim(row.id, claimedAt, retryAt);
+        await publishArticle(row.id);
+        waiting++;
+        break;
+      }
       // Keep the published paper readable. Provider details/URLs stay in private receipts.
       await sql`UPDATE articles SET research_retry_at = now() + interval '24 hours' WHERE id = ${row.id}`;
       // Trusted bibliography fetched before a model failure is still useful to readers.
       await publishArticle(row.id);
       failed++;
-      if (error instanceof BudgetExceededError) break;
       consecutiveFailures++;
       if (researchPauseReason(0,consecutiveFailures)) {
         await pauseResearchBackfill("研究整理连续失败 3 次，已自动暂停旧稿整理；请核对任务和模型服务");
@@ -82,7 +98,8 @@ export async function backfillResearch(options: { limit?: number; deadline?: num
     }
   }
   const [daily] = await sql<{ n:number }[]>`SELECT count(*)::int AS n FROM articles WHERE research_backfill_attempted_at >= now() - interval '24 hours'`;
-  return { processed, failed, remainingDailyCapacity: Math.max(0, 20 - daily!.n) };
+  return { processed, failed, deferred: waiting, waiting: waiting > 0,
+    ...(waiting ? {reason:"budget-or-receipt"} : {}), remainingDailyCapacity: Math.max(0, 20 - daily!.n) };
 }
 
 export function researchPauseReason(databaseBytes:number, consecutiveFailures:number) {
@@ -101,14 +118,23 @@ export async function researchBackfillPaused() {
 
 /** Serialize the rolling daily cap across simultaneous batch/admin retries. */
 export async function claimResearchBackfill(id: string): Promise<boolean> {
+  return (await claimResearchBackfillAt(id)) !== null;
+}
+async function claimResearchBackfillAt(id: string): Promise<Date | null> {
   return sql.begin(async tx => {
     await tx`SELECT pg_advisory_xact_lock(hashtext('research_backfill_daily'))`;
     const [used] = await tx<{ n:number }[]>`SELECT count(*)::int AS n FROM articles WHERE research_backfill_attempted_at >= now() - interval '24 hours'`;
-    if (used!.n >= 20) return false;
-    const claimed = await tx`UPDATE articles SET research_backfill_attempted_at = now()
-      WHERE id = ${id} AND (research_backfill_attempted_at IS NULL OR research_backfill_attempted_at < now() - interval '24 hours') RETURNING id`;
-    return claimed.count > 0;
+    if (used!.n >= 20) return null;
+    const claimed = await tx<{at:Date}[]>`UPDATE articles SET research_backfill_attempted_at = date_trunc('milliseconds', now())
+      WHERE id = ${id} AND (research_backfill_attempted_at IS NULL OR research_backfill_attempted_at < now() - interval '24 hours') RETURNING research_backfill_attempted_at AS at`;
+    return claimed[0]?.at ?? null;
   });
+}
+/** Release only this run's claim; a later run's daily reservation must remain intact. */
+export async function releaseResearchBackfillClaim(id: string, claimedAt: Date, retryAt: Date) {
+  const rows = await sql`UPDATE articles SET research_backfill_attempted_at=NULL,research_retry_at=${retryAt}
+    WHERE id=${id} AND research_backfill_attempted_at=${claimedAt} RETURNING id`;
+  return rows.count > 0;
 }
 /** Free baseline projection for legacy items before their gradual model enrichment. */
 export async function publishResearchBaseline() {

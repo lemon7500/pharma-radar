@@ -10,6 +10,8 @@ import { AdminPage, Badge, Button, Card, DataTable, Dot, Empty, Field, Json, Rea
 
 type Row = Record<string, any>;
 interface Runs {
+  deferredEvents:Array<{queue:string;reason:string;service:string|null;n:number;next:string;oldest:string}>;
+  modelBudget:{available:boolean;blockedWindow:string|null;retryAt:string|null;remaining:{minute:number;hour:number;day:number}|null};
   research:{rejected:number;rejectedFields:Array<{reason:string;count:number}>;processingVersion:string;total:number;ready:number;insufficient:number;waiting:number;retrying:number;attempted:number;database_bytes:string;requests:number;cost:string|null;paused:boolean;pauseReason:string|null};
   checkedAt: string;
   processes: Array<{ role: string; pid: number; host: string; release: string; startedAt: string; at: string; alive: boolean }>;
@@ -78,6 +80,17 @@ export default function RunsAdmin({ loaderData }: Route.ComponentProps) {
         {r.research.paused && <p className="mb-4 text-[13px] text-hot">已暂停：{r.research.pauseReason || '管理员暂停'}</p>}
         <div className="grid grid-cols-2 gap-4 text-[13px]"><p>导读已整理 <strong>{r.research.ready}</strong> / {r.research.total}</p><p>材料不足 <strong>{r.research.insufficient}</strong></p><p>等待整理 <strong>{r.research.waiting}</strong></p><p>字段有拒收 <strong>{r.research.rejected}</strong></p><p>待重试 <strong>{r.research.retrying}</strong></p><p>24 小时旧稿 <strong>{r.research.attempted}</strong> / 20</p><p>数据库 <strong>{(Number(r.research.database_bytes)/1048576).toFixed(1)}</strong> MB</p><p>回填模型请求 <strong>{r.research.requests}</strong> 次</p><p>已记录费用 <strong>{r.research.cost === null ? "服务商未提供" : Number(r.research.cost).toFixed(4)}</strong></p></div><p className="mt-4 text-[12px] text-ink-3">处理版本：{r.research.processingVersion}。仅统计研究回填的实际请求，包含重试；模型用量及最终账单请在服务商核对。暂停后保留正常采集与阅读。</p><Json value={r.research.rejectedFields} label="字段拒收原因统计" />
       </Card></div>
+      <div className="mb-5"><Card title="等待额度与回执的事件任务">
+        <p className="mb-4 text-[13px] text-ink-3">新资料先处理，之后恢复事件摘要、简报和旧稿。额度按滚动时间窗口释放；这里的等待不计为模型失败，也不会提高调用上限。</p>
+        {r.modelBudget.remaining && <p className="mb-4 text-[13px]">默认模型剩余请求：每分钟 {r.modelBudget.remaining.minute} · 每小时 {r.modelBudget.remaining.hour} · 24 小时 {r.modelBudget.remaining.day}{!r.modelBudget.available && <> · {r.modelBudget.blockedWindow==='stopped'?'已停止调用':<>预计可恢复 <Time at={r.modelBudget.retryAt} /></>}</>}</p>}
+        <DataTable dense rows={r.deferredEvents} rowKey={d=>`${d.queue}-${d.reason}-${d.service}`} empty="没有等待恢复的事件任务" columns={[
+          {key:'queue',label:'任务',render:d=>d.queue==='events.digest'?'事件摘要':'资料归组'},
+          {key:'reason',label:'等待原因',render:d=><Badge tone="warn">{d.reason==='budget'?'等待额度':'等待已有请求完成'}</Badge>},
+          {key:'count',label:'数量',align:'right',render:d=>num(d.n)},
+          {key:'next',label:'下次检查',render:d=><Time at={d.next} />},
+        ]} />
+        <p className="mt-3 text-[12px] text-ink-3">下次检查还需等待定时任务实际启动。已收到的结果会复用；结果未知的请求继续保留在下方供核对。</p>
+      </Card></div>
       <div className="grid gap-5 xl:grid-cols-2">
         <Card title="队列" pad={false}>
           <DataTable
@@ -104,7 +117,7 @@ export default function RunsAdmin({ loaderData }: Route.ComponentProps) {
             rowKey={(j) => j.job}
             columns={[
               { key: "j", label: "任务", render: (j) => <span className="font-mono text-[12.5px]">{j.job}</span> },
-              { key: "s", label: "上次", render: (j) => <Badge tone={j.status === "ok" ? "ok" : j.status === "failed" ? "bad" : "muted"} title={j.error ?? undefined}>{j.status ?? "运行中"}</Badge> },
+              { key: "s", label: "上次", render: (j) => <Badge tone={j.waiting ? "warn" : j.status === "ok" ? "ok" : j.status === "failed" ? "bad" : "muted"} title={j.waiting ? (j.waiting_reason==='priority-work'?'等待新资料处理完成':'等待额度或已有请求') : j.error ?? undefined}>{j.waiting ? "等待恢复" : j.status ?? "运行中"}</Badge> },
               { key: "at", label: "时间", render: (j) => <Time at={j.started_at} /> },
               { key: "d", label: "耗时", align: "right", render: (j) => duration(j.started_at, j.finished_at) },
               { key: "f", label: "24h 失败", align: "right", render: (j) => (j.failed_24h ? <span className="text-hot">{j.failed_24h}/{j.runs_24h}</span> : `0/${j.runs_24h}`) },
@@ -239,7 +252,7 @@ export default function RunsAdmin({ loaderData }: Route.ComponentProps) {
               columns={[
                 { key: "at", label: "开始", render: (t) => <span className="num whitespace-nowrap">{bj(t.started_at)}</span> },
                 { key: "j", label: "任务", render: (t) => <span className="font-mono text-[12px]">{t.job}</span> },
-                { key: "s", label: "结果", render: (t) => <Badge tone={t.status === "ok" ? "ok" : t.status === "failed" ? "bad" : "muted"} title={t.error ?? undefined}>{t.status ?? "运行中"}</Badge> },
+                { key: "s", label: "结果", render: (t) => <Badge tone={t.waiting ? "warn" : t.status === "ok" ? "ok" : t.status === "failed" ? "bad" : "muted"} title={t.error ?? undefined}>{t.waiting ? "等待恢复" : t.status ?? "运行中"}</Badge> },
                 { key: "d", label: "耗时", align: "right", render: (t) => duration(t.started_at, t.finished_at) },
               ]}
             />

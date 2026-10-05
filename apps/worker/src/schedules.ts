@@ -4,6 +4,8 @@ import { FEATURES } from "@aihot/industry/features";
 import { credential } from "@aihot/backend/config";
 import { ensureQueue, recordRun } from "@aihot/backend/jobs/queue";
 import { sweepUnprocessed } from "@aihot/backend/jobs/content";
+import { importLegacyEventDeferrals, recoverDeferredEventJobs } from "@aihot/backend/jobs/event-deferrals";
+import { ARTICLE_QUEUES, EVENT_QUEUES, pendingPriorityWork, runWithBudgetWaiting } from "@aihot/backend/jobs/priority";
 import { translatePending } from "@aihot/backend/editorial/translate";
 import { adaptIntervals, scheduleDueSources } from "@aihot/backend/sources/collect";
 import { scheduleMpReconcile } from "@aihot/backend/sources/mp";
@@ -35,6 +37,11 @@ interface Scheduled {
 
 const collecting = process.env.COLLECT_ENABLED !== "false";
 
+async function runReport(run: () => Promise<unknown>) {
+  if (await pendingPriorityWork([...ARTICLE_QUEUES, ...EVENT_QUEUES])) return { waiting: true, reason: "priority-work" };
+  return runWithBudgetWaiting(run);
+}
+
 export const SCHEDULES: Scheduled[] = [
   { name: "content.sweep", cron: "*/5 * * * *", run: sweepUnprocessed },
   // Full-text translations of newly selected items (model calls; off with MODEL_CALLS_ENABLED=false).
@@ -43,18 +50,18 @@ export const SCHEDULES: Scheduled[] = [
   { name: "hot.snapshot", cron: "2 * * * *", run: () => snapshotHeat() },
   { name: "stories.status", cron: "7 * * * *", run: refreshStoryStatuses },
   { name: "stories.links", cron: "12 * * * *", run: linkRelatedStories },
-  { name: "reports.daily", cron: "0 8 * * *", missed: "once", run: () => composeDaily(beijingDate(Date.now())) },
-  { name: "reports.weekly", cron: "0 10 * * 1", missed: "once", run: () => composeWeekly(isoWeekLabel(addDays(beijingDate(Date.now()), -7))) },
+  { name: "reports.daily", cron: "0 8 * * *", missed: "once", run: () => runReport(() => composeDaily(beijingDate(Date.now()))) },
+  { name: "reports.weekly", cron: "0 10 * * 1", missed: "once", run: () => runReport(() => composeWeekly(isoWeekLabel(addDays(beijingDate(Date.now()), -7)))) },
   {
     name: "reports.monthly",
     cron: "30 10 1 * *",
     missed: "once",
     run: () => {
       const [y, m] = beijingDate(Date.now()).split("-").map(Number) as [number, number];
-      return composeMonthly(m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`);
+      return runReport(() => composeMonthly(m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`));
     },
   },
-  { name: "reports.catch-up", cron: "15 * * * *", run: () => catchUpReports() },
+  { name: "reports.catch-up", cron: "15 * * * *", run: () => runReport(() => catchUpReports()) },
   { name: "ops.retention", cron: "30 3 * * *", missed: "once", run: () => dailyRetention() },
   { name: "sources.icons", cron: "40 4 * * *", missed: "once", run: () => refreshSourceIcons() },
   // IndexNow for new indexable pages (off unless INDEXNOW_SUBMIT_ENABLED).
@@ -64,7 +71,15 @@ export const SCHEDULES: Scheduled[] = [
   {
     name: "ops.recover",
     cron: "*/10 * * * *",
-    run: async () => ({ receipts: await markStalePendingReceipts(), released: await autoReleaseUnknownReceipts(), deliveries: await markStaleDeliveries() }),
+    run: async () => ({
+      receipts: await markStalePendingReceipts(),
+      released: await autoReleaseUnknownReceipts(),
+      deliveries: await markStaleDeliveries(),
+      legacy: await importLegacyEventDeferrals(),
+      deferred: await pendingPriorityWork(ARTICLE_QUEUES)
+        ? { waiting: true, reason: "priority-work" }
+        : await recoverDeferredEventJobs(),
+    }),
   },
   { name: "ops.alerts", cron: "*/10 * * * *", run: () => checkAlerts() },
   // One message with the follow-ups that do not touch readers (nothing when there are none).

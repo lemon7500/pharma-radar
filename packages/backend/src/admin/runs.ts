@@ -7,6 +7,7 @@ import { failureGroupSql, queueProcessing, requeueFailed } from "../jobs/content
 import { CAPABILITIES } from "../editorial/models.ts";
 import { researchBackfillPaused } from "../research/backfill.ts";
 import { RESEARCH_PROCESSING_VERSION } from "../research/material.ts";
+import { readServiceBudget } from "../providers/budget.ts";
 
 const STALE_HEARTBEAT_MS = 3 * 60_000;
 
@@ -15,7 +16,8 @@ export async function runsOverview() {
     sql<{ key: string; value: Record<string, unknown>; updated_at: Date }[]>`SELECT key, value, updated_at FROM settings WHERE key LIKE 'heartbeat.%' ORDER BY key`,
     sql`
       WITH latest AS (
-        SELECT DISTINCT ON (job) job, started_at, finished_at, status, left(error, 400) AS error
+        SELECT DISTINCT ON (job) job, started_at, finished_at, status, left(error, 400) AS error,
+          detail->>'waiting'='true' AS waiting, detail->>'reason' AS waiting_reason, detail->>'retryAt' AS retry_at
         FROM job_runs ORDER BY job, started_at DESC
       ), counts AS (
         SELECT job, count(*) FILTER (WHERE status = 'failed')::int AS failed_24h, count(*)::int AS runs_24h
@@ -23,13 +25,16 @@ export async function runsOverview() {
       )
       SELECT latest.*, coalesce(counts.failed_24h, 0) AS failed_24h, coalesce(counts.runs_24h, 0) AS runs_24h
       FROM latest LEFT JOIN counts USING (job) ORDER BY job`,
-    sql`SELECT id, job, started_at, finished_at, status, left(error, 300) AS error FROM job_runs ORDER BY started_at DESC LIMIT 80`,
+    sql`SELECT id, job, started_at, finished_at, status, left(error, 300) AS error,
+      detail->>'waiting'='true' AS waiting, detail->>'reason' AS waiting_reason FROM job_runs ORDER BY started_at DESC LIMIT 80`,
     sql<{ name: string; state: string; n: number; oldest: Date }[]>`
       SELECT name, state, count(*)::int AS n, min(created_on) AS oldest FROM pgboss.job
       WHERE state IN ('created', 'retry', 'active') GROUP BY 1, 2 ORDER BY 1, 2`,
     sql`
       SELECT name, count(*)::int AS failed, max(completed_on) AS last, left((array_agg(output::text ORDER BY completed_on DESC))[1], 300) AS last_output
-      FROM pgboss.job WHERE state = 'failed' AND completed_on > now() - interval '24 hours' GROUP BY 1 ORDER BY 2 DESC`,
+      FROM pgboss.job j WHERE state = 'failed' AND completed_on > now() - interval '24 hours'
+        AND NOT EXISTS (SELECT 1 FROM event_job_deferral_imports i WHERE i.source_job_id=j.id)
+      GROUP BY 1 ORDER BY 2 DESC`,
     sql`
       SELECT id, name, kind, health, fail_count, last_ok_at, last_fetch_at, next_fetch_at, interval_minutes, left(last_error, 200) AS last_error
       FROM sources
@@ -68,7 +73,12 @@ export async function runsOverview() {
     WHERE p.visibility='public' AND p.eligible AND a.canonical_article_id IS NULL`;
   const [modelUsage] = await sql<{requests:number;cost:string|null}[]>`SELECT count(*)::int AS requests,sum(a.cost) AS cost FROM receipt_attempts a JOIN receipts r ON r.id=a.receipt_id WHERE r.purpose='research_backfill' AND a.started_at >= now()-interval '24 hours'`;
   const rejectedFields = await sql`SELECT e.value AS reason,count(*)::int AS count FROM articles a CROSS JOIN LATERAL jsonb_each_text(a.research_validation) e GROUP BY e.value ORDER BY count(*) DESC LIMIT 12`;
+  const deferredEvents = await sql<{queue:string;reason:string;service:string|null;n:number;next:Date;oldest:Date}[]>`
+    SELECT queue,reason,service,count(*)::int AS n,min(next_retry_at) AS next,min(created_at) AS oldest
+    FROM event_job_deferrals GROUP BY queue,reason,service ORDER BY next`;
   return {
+    deferredEvents,
+    modelBudget: await readServiceBudget('llm'),
     research:{...research,...modelUsage!,rejectedFields,processingVersion:RESEARCH_PROCESSING_VERSION,paused:await researchBackfillPaused(),pauseReason:(await sql`SELECT value->>'reason' AS reason FROM settings WHERE key='research.backfill.paused'`)[0]?.reason || null},
     checkedAt: new Date(now).toISOString(),
     processes: heartbeats.map((h) => ({
