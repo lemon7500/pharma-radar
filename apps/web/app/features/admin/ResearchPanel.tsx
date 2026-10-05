@@ -22,7 +22,7 @@ export function AdminResearchPanel({ article,publication,override,base }: {artic
   const [metadata,setMetadata] = useState<Bibliography>(profile?.bibliography || article.bibliography || emptyBibliography);
   const [structure,setStructure] = useState(""); const [error,setError] = useState("");
   const [useMaterial,setUseMaterial] = useState(false);
-  const [materialKind,setMaterialKind] = useState<"fulltext"|"abstract-supplement">("abstract-supplement");
+  const [materialKind,setMaterialKind] = useState<"fulltext"|"abstract-supplement"|"publisher-summary">("abstract-supplement");
   const [materialText,setMaterialText] = useState(""); const [materialSources,setMaterialSources] = useState("[]");
   const edit = () => {
     setMetadata(profile?.bibliography || article.bibliography || emptyBibliography);setStructure(JSON.stringify(paired(profile,support),null,2));
@@ -51,8 +51,8 @@ export function AdminResearchPanel({ article,publication,override,base }: {artic
     <Field label="发表日期"><Input type="date" value={metadata.publishedDate || ""} onChange={e => setMetadata({...metadata,publishedDate:e.target.value || null})} /></Field>
     <label className="my-3 flex min-h-11 items-center gap-2 text-[13px]"><input type="checkbox" checked={useMaterial} onChange={e => setUseMaterial(e.target.checked)} />使用人工补核材料验证研究字段</label>
     {useMaterial && <div className="space-y-3 rounded-control border border-line p-3">
-      <Field label="已核对范围"><select className="min-h-11 w-full rounded-control bg-bg-sunk p-2" value={materialKind} onChange={e => setMaterialKind(e.target.value as typeof materialKind)}><option value="abstract-supplement">摘要与补充材料（未核对正文）</option><option value="fulltext">原文全文</option></select></Field>
-      <p className="text-[12px] leading-relaxed text-ink-3">粘贴实际核对的原文文本，保留图号和上下文；摘要与补充材料应一起保存。图片图注须按原文转录。材料文本与引用片段仅保存在后台，公开页面只显示材料范围和来源链接。</p>
+      <Field label="已核对范围"><select className="min-h-11 w-full rounded-control bg-bg-sunk p-2" value={materialKind} onChange={e => setMaterialKind(e.target.value as typeof materialKind)}><option value="abstract-supplement">摘要与补充材料（未核对正文）</option><option value="publisher-summary">出版商报道与监管材料</option><option value="fulltext">原文全文</option></select></Field>
+      <p className="text-[12px] leading-relaxed text-ink-3">粘贴实际核对的来源文本，保留图号和上下文；摘要与补充材料应一起保存。出版商报道与监管材料不代表已核对临床论文全文。图片图注须按原文转录。材料文本与引用片段仅保存在后台，公开页面只显示材料范围和来源链接。</p>
       <p className="text-[12px] leading-relaxed text-ink-3">新增或更换材料内容会撤回旧概要、推荐理由与精选状态；研究结构验证通过后，先展示结构化概要，再复核并重新设置推荐。</p>
       <Field label="补核材料文本"><Textarea rows={8} maxLength={250000} value={materialText} onChange={e => setMaterialText(e.target.value)} /></Field>
       <Field label="公开来源链接 JSON（每条包含 label 和 url）"><Textarea rows={5} className="font-mono text-[12px]" value={materialSources} onChange={e => setMaterialSources(e.target.value)} placeholder={'[{"label":"出版商摘要","url":"https://example.org/article"}]'} /></Field>

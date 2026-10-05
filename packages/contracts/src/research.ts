@@ -52,5 +52,5 @@ export const BASIS_LABELS: Record<ResearchProfile["basis"], string> = {
 };
 export function researchBasisLabel(profile: ResearchProfile): string {
   if (profile.materialKind === "abstract-supplement" && profile.basis === "abstract") return "基于摘要与补充材料";
-  return profile.materialKind === "publisher-summary" && profile.basis === "abstract" ? "基于出版商研究简讯" : BASIS_LABELS[profile.basis];
+  return profile.materialKind === "publisher-summary" && profile.basis === "abstract" ? "基于出版商报道与公开资料" : BASIS_LABELS[profile.basis];
 }

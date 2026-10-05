@@ -70,6 +70,8 @@ test('review clinical evidence and publisher news preserve their own roles and c
  const review=validateResearchExtraction({evidenceStages:[{value:'clinical',quote:'This review covers randomized phase II clinical trials'}],clinicalPhase:{value:'II',quote:'This review covers randomized phase II clinical trials'}},{title:'Clinical review',bodyText:text,bibliography:{...bibliography,publicationTypes:['Review']}});
  assert.deepEqual(review.profile.evidenceStages,['clinical']);assert.equal(review.profile.clinicalPhase,null);
  const news=baselineResearch({...material,bibliography:{...bibliography,publicationTypes:['News']}});assert.equal(news.origin,'secondary');assert.equal(news.materialKind,'publisher-summary');assert.equal(news.bibliography.doi,'10.1234/own');assert.equal(news.documentType,'news-policy');
+ const brief=validateResearchExtraction({clinicalPhase:{value:'II',quote:'randomized phase II clinical trials'}},{title:'Publisher brief',bodyText:text,bibliography:{...bibliography,doi:'10.1234/brief-own',publicationTypes:['News In Brief']}});
+ assert.equal(brief.profile.origin,'secondary');assert.equal(brief.profile.documentType,'news-policy');assert.equal(brief.profile.materialKind,'publisher-summary');assert.equal(brief.profile.bibliography.doi,'10.1234/brief-own');assert.equal(brief.profile.clinicalPhase,null);
  const clinical=validateResearchExtraction({evidenceStages:[{value:'clinical',quote:'randomized phase II clinical trials'}],clinicalPhase:{value:'II',quote:'randomized phase II clinical trials'}},{title:'Clinical trial',bodyText:text,bibliography});assert.equal(clinical.profile.clinicalPhase,'II');
 });
 test('material fingerprints change with corrected abstracts or own metadata, without dependence on collection time',()=>{

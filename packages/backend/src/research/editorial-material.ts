@@ -6,7 +6,7 @@ const plainText = (value: string) => !/<(?:\/?[a-z][^<>]*>|!--|!\[CDATA\[|\?xml)
 
 /** Private material read by an editor; only its source links enter the public projection. */
 export const EditorialResearchMaterialSchema = z.object({
-  kind: z.enum(["fulltext", "abstract-supplement"]),
+  kind: z.enum(["fulltext", "abstract-supplement", "publisher-summary"]),
   text: z.string().max(250_000).trim().min(100).refine(plainText, "研究材料必须为纯文本，请移除 HTML/XML 标记"),
   sources: z.array(z.object({
     label: z.string().max(120).trim().min(1).refine(plainText, "来源名称必须为纯文本"),

@@ -71,7 +71,7 @@ export function focusSupported(focus: string, quote: string, material: ResearchM
 export function outsidePharmacy(text: string): boolean {
   return agricultural.test(text) && !/pharmac|human|patient|therap|disease|anti[- ]?(?:tumou?r|inflamm|viral|bacterial)|药理|人体|患者|疾病/i.test(text);
 }
-const isSecondary = (b: Bibliography) => b.publicationTypes.some(t => /^(?:News|Research Highlight|News and Views|News & Views)$/i.test(t));
+const isSecondary = (b: Bibliography) => b.publicationTypes.some(t => /^(?:News|News In Brief|Research Highlight|News and Views|News & Views)$/i.test(t));
 export function baselineResearch(material: ResearchMaterial): ResearchProfile {
   const bibliography = normalizeBibliography(material.bibliography);
   const basis = materialBasis(material);
