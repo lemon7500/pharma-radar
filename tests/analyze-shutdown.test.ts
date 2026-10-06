@@ -8,6 +8,7 @@ import { after, before, test } from "node:test";
 import { sql, closeDb } from "@aihot/backend/db";
 import { getBoss, stopBoss } from "@aihot/backend/jobs/queue";
 import { upsertMaterial } from "@aihot/backend/content/materials";
+import { listedCondition } from "@aihot/backend/publication/items";
 
 const T = tag();
 const SOURCE = `test-analyze-stop-${T}`;
@@ -140,7 +141,14 @@ for (const failScore of [false, true]) test(`SIGTERM during ${failScore ? "faile
   const [article] = await sql`SELECT processing_state,processing_attempts,processing_error FROM articles WHERE id=${articleId}`;
   assert.deepEqual({ ...article }, { processing_state: "new", processing_attempts: 2, processing_error: "prior temporary failure" });
   assert.equal((await sql`SELECT 1 FROM analyses WHERE article_id=${articleId}`).length, 0, "an interrupted chain commits no terminal judgement");
-  assert.equal((await sql`SELECT 1 FROM publications WHERE article_id=${articleId}`).length, 0);
+  // The free pre-analysis projection may exist before an interrupted paid chain settles. This
+  // source has no checked-index opt-in or verified bibliography: the row must stay out of public
+  // listings and must not acquire a terminal judgement or a fabricated first-public timestamp.
+  const [projection] = await sql`SELECT analysis_id,eligible,selected,index_only,first_public_at
+    FROM publications WHERE article_id=${articleId}`;
+  assert.deepEqual({ ...projection }, { analysis_id: null, eligible: false, selected: false, index_only: false, first_public_at: null });
+  assert.equal((await sql`SELECT 1 FROM publications p WHERE p.article_id=${articleId}
+    AND p.eligible AND ${listedCondition(new Date())}`).length, 0, "the incomplete projection never enters the public listing");
   const receipts = await sql`SELECT purpose,status FROM receipts WHERE subject=${`article:${articleId}@1`} ORDER BY purpose`;
   assert.deepEqual(receipts.map(r => [r.purpose,r.status]), [["prefilter_article","received"],["score_article",failScore ? "failed" : "received"],["structure_article","received"]]);
   assert.equal((await sql`SELECT state FROM pgboss.job WHERE id=${jobId}`)[0]!.state, "retry", "pg-boss owns restart recovery");
