@@ -58,12 +58,46 @@ test('cells from mice and patient datasets do not imply animal experiments or cl
  const result=validateResearchExtraction({evidenceStages:[{value:'animal',quote:'We used mouse-derived cells in vitro'},{value:'in-vitro',quote:'We used mouse-derived cells in vitro'},{value:'clinical',quote:'No clinical trial was performed and future clinical studies are needed.'},{value:'computational',quote:'analyzed patient data using a deep learning model'}]},{title:'Drug prediction',bodyText:text,bibliography});assert.deepEqual(result.profile.evidenceStages,['in-vitro','computational']);
  const actual=validateResearchExtraction({evidenceStages:[{value:'animal',quote:'We treated mice in vivo and cultured RAW264.7 cells in vitro.'}]},material);assert.deepEqual(actual.profile.evidenceStages,['animal']);
 });
+test('completed surface plasmon resonance binding measurements support in-vitro evidence without inferring animal or clinical stages',()=>{
+ const quote='AnewDesign identifies binders with single-digit-nanomolar affinities measured by surface plasmon resonance (SPR) in a representative nanobody discovery campaign.';
+ const result=validateResearchExtraction({evidenceStages:[{value:'in-vitro',quote},{value:'animal',quote},{value:'clinical',quote}],clinicalPhase:{value:'II',quote}},{title:'Nanobody drug discovery',bodyText:quote,bibliography});
+ assert.deepEqual(result.profile.evidenceStages,['in-vitro']);assert.equal(result.support['evidenceStages.in-vitro'],quote);assert.equal(result.profile.clinicalPhase,null);
+ assert.equal(result.rejections['evidenceStages.animal'],'stage-not-supported');assert.equal(result.rejections['evidenceStages.clinical'],'stage-not-supported');
+ const confirmed='Surface plasmon resonance confirmed nanomolar binding between the designed nanobody and target protein in a representative discovery campaign.';
+ const positive=validateResearchExtraction({evidenceStages:[{value:'in-vitro',quote:confirmed}]},{title:'Nanobody drug discovery',bodyText:confirmed,bibliography});
+ assert.deepEqual(positive.profile.evidenceStages,['in-vitro']);assert.equal(positive.support['evidenceStages.in-vitro'],confirmed);
+});
+test('planned, future-only, unperformed and abbreviation-only SPR do not add an experimental evidence stage',()=>{
+ for(const quote of [
+  'In future studies, binding affinities will be measured by surface plasmon resonance in a nanobody discovery campaign.',
+  'We proposed that binding affinities be measured by surface plasmon resonance in a later validation campaign.',
+  'Binding affinities were not measured by surface plasmon resonance; validation remains pending.',
+  'Binding affinities have not yet been confirmed by surface plasmon resonance in a representative nanobody discovery campaign.',
+  'Binding affinity remains to be confirmed by surface plasmon resonance in a representative nanobody discovery campaign.',
+  'Binding affinity is awaiting validation and is to be determined by surface plasmon resonance in a representative discovery campaign.',
+  'Binding affinities have not yet been assessed by surface plasmon resonance in a representative nanobody discovery campaign.',
+  'Binding affinities have never been validated by surface plasmon resonance in a representative nanobody discovery campaign.',
+  'The surface plasmon resonance assay has not yet been performed to evaluate nanobody binding in the representative discovery campaign.',
+  'We measured binding affinities using SPR in a representative nanobody discovery campaign.',
+ ]){
+  const result=validateResearchExtraction({evidenceStages:[{value:'in-vitro',quote}]},{title:'Nanobody drug discovery',bodyText:'We developed an agentic engine for candidate discovery. '+quote,bibliography});
+  assert.deepEqual(result.profile.evidenceStages,[],quote);assert.equal(result.support['evidenceStages.in-vitro'],undefined);assert.equal(result.rejections['evidenceStages.in-vitro'],'stage-not-supported');
+ }
+});
 test('hyphenated deep-learning and rodent models retain genuine labels; medicinal quality-control has pharmacy relevance',()=>{
  const text='We developed a deep-learning-based algorithm to quantify spontaneous pain behaviours in mice. Rodent models of spontaneous pain reveal paw licking and flinching.';
  const q='We developed a deep-learning-based algorithm to quantify spontaneous pain behaviours in mice.';
  const result=validateResearchExtraction({foci:[{value:'ai-pharma',quote:q}],evidenceStages:[{value:'computational',quote:q},{value:'animal',quote:'Rodent models of spontaneous pain reveal paw licking and flinching.'}]},{title:'Pain measurement',bodyText:text,bibliography});assert.deepEqual(result.profile.foci,['ai-pharma']);assert.deepEqual(result.profile.evidenceStages,['computational','animal']);
  const herbal='Callicarpa nudiflora, a traditional Chinese medicine, was examined for phytochemical quality control. We compared the composition and metabolic profiles of different extracts.';
  const natural=validateResearchExtraction({foci:[{value:'tcm-natural-products',quote:'Callicarpa nudiflora, a traditional Chinese medicine'}]},{title:'Herbal quality control',bodyText:herbal,bibliography});assert.deepEqual(natural.profile.foci,['tcm-natural-products']);
+});
+test('implemented protein language models retain computational evidence without inferring it from a pLM abbreviation',()=>{
+ const quote='We developed ESpma using protein language models and point-cloud features to distinguish biological interfaces from non-biological contacts.';
+ const result=validateResearchExtraction({evidenceStages:[{value:'computational',quote}]},{title:'Protein interface identification',bodyText:quote,bibliography});
+ assert.deepEqual(result.profile.evidenceStages,['computational']);assert.equal(result.support['evidenceStages.computational'],quote);
+ const abbreviation='We developed an interface predictor using pLM features to distinguish biological from non-biological contacts.';
+ const unknown=validateResearchExtraction({evidenceStages:[{value:'computational',quote:abbreviation}]},{title:'Protein interface identification',bodyText:abbreviation,bibliography});
+ assert.deepEqual(unknown.profile.evidenceStages,[]);assert.equal(unknown.rejections['evidenceStages.computational'],'stage-not-supported');
 });
 test('review clinical evidence and publisher news preserve their own roles and cannot claim a clinical phase',()=>{
  const text='This review covers randomized phase II clinical trials and their limitations. It discusses drug development and evidence from multiple published studies.';
@@ -73,6 +107,34 @@ test('review clinical evidence and publisher news preserve their own roles and c
  const brief=validateResearchExtraction({clinicalPhase:{value:'II',quote:'randomized phase II clinical trials'}},{title:'Publisher brief',bodyText:text,bibliography:{...bibliography,doi:'10.1234/brief-own',publicationTypes:['News In Brief']}});
  assert.equal(brief.profile.origin,'secondary');assert.equal(brief.profile.documentType,'news-policy');assert.equal(brief.profile.materialKind,'publisher-summary');assert.equal(brief.profile.bibliography.doi,'10.1234/brief-own');assert.equal(brief.profile.clinicalPhase,null);
  const clinical=validateResearchExtraction({evidenceStages:[{value:'clinical',quote:'randomized phase II clinical trials'}],clinicalPhase:{value:'II',quote:'randomized phase II clinical trials'}},{title:'Clinical trial',bodyText:text,bibliography});assert.equal(clinical.profile.clinicalPhase,'II');
+});
+test('reviewed completed trials support covered clinical evidence but neither future trials nor an original-study background do',()=>{
+ const quote='However, confidence in the clinical evidence remains low because most studies were small, single-center trials with heterogeneous interventions and comparators.';
+ const reviewMaterial={title:'Herbal treatment evidence review',bodyText:quote,bibliography:{...bibliography,publicationTypes:['Review']}};
+ const review=validateResearchExtraction({evidenceStages:[{value:'clinical',quote}],clinicalPhase:{value:'II',quote}},reviewMaterial);
+ assert.deepEqual(review.profile.evidenceStages,['clinical']);assert.equal(review.support['evidenceStages.clinical'],quote);assert.equal(review.profile.clinicalPhase,null);
+ const background=validateResearchExtraction({evidenceStages:[{value:'clinical',quote}]},{...reviewMaterial,bibliography});
+ assert.deepEqual(background.profile.evidenceStages,[]);assert.equal(background.rejections['evidenceStages.clinical'],'stage-not-supported');
+ const future='Rigorous multicenter trials, standardized interventions, quantitative pharmacology, pharmacokinetic validation, and mechanism-linked clinical studies are required.';
+ const pending=validateResearchExtraction({evidenceStages:[{value:'clinical',quote:future}]},{...reviewMaterial,bodyText:future});
+ assert.deepEqual(pending.profile.evidenceStages,[]);assert.equal(pending.rejections['evidenceStages.clinical'],'stage-not-supported');
+ for(const absent of [
+  'The clinical evidence was absent because all studies were in animals, not trials, and no patient studies were available.',
+  'The clinical evidence was unavailable because most studies were experiments in animals rather than trials in people.',
+  'The clinical evidence was lacking because all studies were not trials and no patient studies were available.',
+ ]){
+  const unsupported=validateResearchExtraction({evidenceStages:[{value:'clinical',quote:absent}]},{...reviewMaterial,bodyText:absent});
+  assert.deepEqual(unsupported.profile.evidenceStages,[],absent);assert.equal(unsupported.rejections['evidenceStages.clinical'],'stage-not-supported');
+ }
+});
+test('a supported review type is established before covered evidence while publisher metadata keeps priority',()=>{
+ const docQuote='This review summarizes completed studies of herbal interventions and their methodological limitations.';
+ const quote='Confidence in the clinical evidence remains low because most studies were small, single-center trials with heterogeneous interventions.';
+ const input={documentType:{value:'review',quote:docQuote},origin:{value:'primary',quote:docQuote},evidenceStages:[{value:'clinical',quote}],clinicalPhase:{value:'II',quote}};
+ const review=validateResearchExtraction(input,{title:'Herbal intervention evidence',bodyText:docQuote+' '+quote,bibliography});
+ assert.equal(review.profile.documentType,'review');assert.equal(review.profile.origin,'primary');assert.deepEqual(review.profile.evidenceStages,['clinical']);assert.equal(review.profile.clinicalPhase,null);
+ const news=validateResearchExtraction(input,{title:'Publisher report about a review',bodyText:docQuote+' '+quote,bibliography:{...bibliography,publicationTypes:['Research Highlight']}});
+ assert.equal(news.profile.documentType,'news-policy');assert.equal(news.profile.origin,'secondary');assert.deepEqual(news.profile.evidenceStages,[]);assert.equal(news.profile.clinicalPhase,null);assert.equal(news.rejections.documentType,'conflicts-with-source-metadata');
 });
 test('material fingerprints change with corrected abstracts or own metadata, without dependence on collection time',()=>{
  assert.equal(researchMaterialFingerprint(material),researchMaterialFingerprint({...material}));assert.notEqual(researchMaterialFingerprint(material),researchMaterialFingerprint({...material,bodyText:body+' Corrected result.'}));assert.notEqual(researchMaterialFingerprint(material),researchMaterialFingerprint({...material,bibliography:{...bibliography,doi:'10.1234/new'}}));

@@ -93,11 +93,13 @@ export function baselineResearch(material: ResearchMaterial): ResearchProfile {
   };
 }
 const stagePatterns: Record<string, RegExp> = {
-  computational: /\b(?:in silico|computational|molecular docking|machine[- ]learning|deep[- ]learning|neural network|language model|transformer|density functional|virtual screening|simulation|artificial intelligence)\b|计算模拟|分子对接|虚拟筛选|机器学习|人工智能/i,
+  computational: /\b(?:in silico|computational|molecular docking|machine[- ]learning|deep[- ]learning|neural network|language models?|transformer|density functional|virtual screening|simulation|artificial intelligence)\b|计算模拟|分子对接|虚拟筛选|机器学习|人工智能/i,
   "in-vitro": /\bin vitro\b|cell (?:line|culture)|cultured cells|[A-Z0-9-]+ cells|体外|细胞系|细胞实验/i,
   animal: /\b(?:mice|mouse|rats|rat|rodent models?|animal model|zebrafish)\b|小鼠|大鼠|动物模型|斑马鱼/i,
   clinical: /\b(?:clinical trial|clinical study|randomi[sz]ed|phase [123iv]+ trial|enrolled patients|participants were)\b|临床试验|随机对照|受试者|患者入组/i,
 };
+const completedAssay = /\b(?:measured|assessed|determined|confirmed|validated|performed|observed|revealed|showed|yielded)\b/i;
+const incompleteAssay = /\b(?:planned|proposed|pending|awaiting|awaits?|remains?|remained)\b|\bto\s+be\b|\b(?:no|not|never|cannot|\w+n['’]t)\b.*\b(?:measured|assessed|determined|confirmed|validated|performed|observed|revealed|showed|yielded)\b/i;
 const normalized = (v: string) => collapseWhitespace(scientificText(v)).toLowerCase();
 export type ResearchSupport = Record<string, string>;
 export type ResearchRejections = Record<string, string>;
@@ -130,6 +132,16 @@ export function validateResearchExtraction(value: unknown, material: ResearchMat
     support[key] = quote;
     return entry;
   };
+  const doc = supported(v.documentType, "documentType");
+  if (doc && DOCUMENT_TYPES.some(x => x.key === doc.value)) {
+    const known = profile.documentType;
+    if ((known === "review" || known === "news-policy" || known === "methods-resources") && doc.value !== known) { delete support.documentType; rejections.documentType = "conflicts-with-source-metadata"; }
+    else profile.documentType = doc.value;
+  }
+  const origin = supported(v.origin, "origin");
+  if (origin && SOURCE_ORIGINS.some(x => x.key === origin.value)) profile.origin = origin.value;
+  // The publisher's own metadata outranks an inferred role from the text it reports.
+  if (isSecondary(profile.bibliography)) { profile.origin = "secondary"; profile.documentType = "news-policy"; }
   for (const [field, vocabulary] of [["areas", RESEARCH_AREAS], ["foci", RESEARCH_FOCI], ["evidenceStages", EVIDENCE_STAGES]] as const) {
     const values: string[] = [];
     for (const entry of Array.isArray(v[field]) ? v[field].slice(0, 8) : []) {
@@ -141,23 +153,17 @@ export function validateResearchExtraction(value: unknown, material: ResearchMat
       if (field === "evidenceStages") {
         const quote = String(accepted.quote);
         const cellOnly = value === "animal" && /\b(?:murine|mouse|rat)[ -](?:derived[ -])?(?:cell|macrophage|fibroblast)|(?:mice|mouse|rat)\s+cell|小鼠.*细胞/i.test(quote) && !/\b(?:treated|administered|injected|in vivo|animal model|mice were|rats were)\b|动物模型|体内|给药/i.test(quote);
-        if (!stagePatterns[value]!.test(quote) || cellOnly || (value === "clinical" && /\b(?:no|not|without|future|warrant|before|preclinical)\b.{0,40}\bclinical|未.*临床|尚无.*临床/i.test(quote))) { delete support[`${field}.${value}`]; rejections[`${field}.${value}`] = "stage-not-supported"; continue; }
+        // A completed biophysical binding assay is in vitro; an assay suggested for later is not.
+        const measuredSpr = value === "in-vitro" && quote.split(/[.!?。；;]/).some(sentence => /\bsurface plasmon resonance\b/i.test(sentence) && completedAssay.test(sentence) && !prospectOnly.test(sentence) && !incompleteAssay.test(sentence));
+        // A review may describe completed trials; clinical background is not an original trial.
+        const reviewedTrials = value === "clinical" && profile.documentType === "review" && quote.split(/[.!?。；;]/).some(sentence => /\bclinical evidence\b.{0,120}\bstudies were\b.{0,80}\btrials\b/i.test(sentence) && !prospectOnly.test(sentence) && !/\b(?:planned|proposed|pending|absent|unavailable|lacking|no|not|never|animals?|mice|mouse|rats?|rodents?|preclinical)\b|\bin vitro\b/i.test(sentence));
+        if ((!stagePatterns[value]!.test(quote) && !measuredSpr && !reviewedTrials) || cellOnly || (value === "clinical" && /\b(?:no|not|without|future|warrant|before|preclinical)\b.{0,40}\bclinical|未.*临床|尚无.*临床/i.test(quote))) { delete support[`${field}.${value}`]; rejections[`${field}.${value}`] = "stage-not-supported"; continue; }
       }
       values.push(value);
     }
     // Deterministic topic hints remain useful while the model leaves a facet empty.
     if (values.length || field !== "areas") (profile[field] as string[]) = [...new Set(values)];
   }
-  const doc = supported(v.documentType, "documentType");
-  if (doc && DOCUMENT_TYPES.some(x => x.key === doc.value)) {
-    const known = profile.documentType;
-    if ((known === "review" || known === "news-policy" || known === "methods-resources") && doc.value !== known) { delete support.documentType; rejections.documentType = "conflicts-with-source-metadata"; }
-    else profile.documentType = doc.value;
-  }
-  const origin = supported(v.origin, "origin");
-  if (origin && SOURCE_ORIGINS.some(x => x.key === origin.value)) profile.origin = origin.value;
-  // The publisher's own metadata outranks an inferred role from the text it reports.
-  if (isSecondary(profile.bibliography)) { profile.origin = "secondary"; profile.documentType = "news-policy"; }
   const phase = supported(v.clinicalPhase, "clinicalPhase");
   if (phase && profile.documentType === "original-research" && profile.origin === "primary" && profile.evidenceStages.includes("clinical") && /^(?:I|II|III|IV|1|2|3|4)(?:\/(?:I|II|III|IV|1|2|3|4))?$/.test(String(phase.value))) {
     const roman: Record<string, string> = { I: "1", II: "2", III: "3", IV: "4" };
