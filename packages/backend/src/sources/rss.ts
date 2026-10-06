@@ -6,6 +6,7 @@ import { sanitizeBody } from "../content/sanitize.ts";
 import { identityKeyForUrl } from "../lib/url.ts";
 import { sha256, stableJson } from "../lib/ids.ts";
 import { FetchError, type Candidate, type SourceRow } from "./types.ts";
+import { parseSourcePublishedAt, sourcePublicationTime } from "../editorial/publication-time.ts";
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -39,12 +40,11 @@ function arr<T>(v: T | T[] | undefined | null): T[] {
 
 function parseDate(v: string): Date | null {
   if (!v) return null;
-  const t = Date.parse(v);
-  if (Number.isFinite(t)) return new Date(t);
+  const parsed = parseSourcePublishedAt(v);
+  if (parsed) return parsed;
   // RFC 822 variants with Chinese weekday or odd zones
   const cleaned = v.replace(/星期[一二三四五六日天]/, "").replace(/\s+/g, " ").trim();
-  const t2 = Date.parse(cleaned);
-  return Number.isFinite(t2) ? new Date(t2) : null;
+  return parseSourcePublishedAt(cleaned);
 }
 
 function atomLink(links: unknown): string {
@@ -161,6 +161,8 @@ export async function fetchRss(source: SourceRow, opts: { force?: boolean } = {}
       const bodyHtmlRaw = contentEncoded || (summaryIsBody ? description : "");
       const bodyHtml = bodyHtmlRaw ? sanitizeBody(bodyHtmlRaw, link) : null;
       const enclosure = arr(it.enclosure as Record<string, string> | Array<Record<string, string>>).find((e) => /^image\//.test(e?.["@type"] ?? ""));
+      const publishedValue = text(it.pubDate) || text(it["dc:date"]) || text(it.published);
+      const publishedAt = parseDate(publishedValue);
       const media = [
         ...(enclosure ? [{ kind: "image" as const, url: enclosure["@url"]! }] : []),
         ...(bodyHtmlRaw ? imagesFrom(bodyHtmlRaw, link) : []),
@@ -170,11 +172,11 @@ export async function fetchRss(source: SourceRow, opts: { force?: boolean } = {}
         ...identity(link),
         title,
         author: text(it["dc:creator"]) || text(it.author) || null,
-        publishedAt: parseDate(text(it.pubDate) || text(it["dc:date"]) || text(it.published)),
+        publishedAt,
         ...feedText(bodyHtml, description, source),
         media: media.slice(0, 6),
         categories: arr(it.category).map((c) => text(c)).filter(Boolean),
-        raw: { guid: text(it.guid) || null },
+        raw: { guid: text(it.guid) || null, publicationTime: sourcePublicationTime(publishedValue, publishedAt) },
       });
     }
     return { candidates: out, validator, notModified: false };
@@ -190,17 +192,19 @@ export async function fetchRss(source: SourceRow, opts: { force?: boolean } = {}
       const summary = text(e.summary);
       const bodyHtml = content ? sanitizeBody(content, link) : null;
       const entryUrl = new URL(link, url).toString();
+      const publishedValue = text(e.published) || text(e.updated);
+      const publishedAt = parseDate(publishedValue);
       out.push({
         url: entryUrl,
         ...identity(entryUrl),
         title,
         author: text(arr(e.author)[0]?.name) || null,
-        publishedAt: parseDate(text(e.published) || text(e.updated)),
+        publishedAt,
         sourceUpdatedAt: parseDate(text(e.updated)),
         ...feedText(bodyHtml, summary, source),
         media: content ? imagesFrom(content, link) : [],
         categories: arr(e.category).map((c: any) => c?.["@term"] ?? text(c)).filter(Boolean),
-        raw: { id: text(e.id) || null },
+        raw: { id: text(e.id) || null, publicationTime: sourcePublicationTime(publishedValue, publishedAt) },
       });
     }
     return { candidates: out, validator, notModified: false };

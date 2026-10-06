@@ -6,6 +6,7 @@ import { identityKeyForUrl } from "../lib/url.ts";
 import { collapseWhitespace } from "../lib/text.ts";
 import type { Bibliography } from "@aihot/contracts/research";
 import { normalizeBibliography, bibliographyPresent } from "../research/profile.ts";
+import { storedSourcePublicationTime } from "../editorial/publication-time.ts";
 
 export interface MediaItem {
   kind: "image" | "video";
@@ -167,8 +168,8 @@ async function upsertIn(db: Db, m: MaterialInput): Promise<MaterialResult> {
     return { articleId: newId, created: true, revised: false, backfill: t.backfill };
   }
 
-  const [existing] = await db<{ id: string; source_id: string; revision: number; content_hash: string | null; backfill: boolean; title: string; body_text: string | null; excerpt: string | null }[]>`
-    SELECT id, source_id, revision, content_hash, backfill, title, body_text, excerpt FROM articles WHERE identity_key = ${identityKey} FOR UPDATE`;
+  const [existing] = await db<{ id: string; source_id: string; revision: number; content_hash: string | null; backfill: boolean; title: string; body_text: string | null; excerpt: string | null; published_at:Date|null; raw:Record<string,unknown>|null }[]>`
+    SELECT id, source_id, revision, content_hash, backfill, title, body_text, excerpt, published_at, raw FROM articles WHERE identity_key = ${identityKey} FOR UPDATE`;
   await db`INSERT INTO article_discoveries (article_id, source_id, via, discovered_at, source_url)
            VALUES (${existing!.id}, ${m.sourceId}, ${m.via}, ${discoveredAt}, ${m.url}) ON CONFLICT (article_id, source_id, via) DO UPDATE SET source_url = coalesce(article_discoveries.source_url, EXCLUDED.source_url)`;
   if (hasBibliography) await db`UPDATE articles SET bibliography = ${db.json(bibliography as never)}, research_enriched_at = NULL
@@ -178,6 +179,14 @@ async function upsertIn(db: Db, m: MaterialInput): Promise<MaterialResult> {
   // discovery only: its title and summary are its own rendering, and taking them made the article flip
   // between the two sources' versions on every fetch. Only the article's own source revises it.
   if (existing!.source_id !== m.sourceId) return unchanged;
+  const rawRecord = m.raw && typeof m.raw === "object" ? m.raw as Record<string, unknown> : null;
+  const sourceTime = storedSourcePublicationTime(rawRecord?.publicationTime, t.publishedAt);
+  const existingTime = storedSourcePublicationTime(existing!.raw?.publicationTime, existing!.published_at);
+  if (sourceTime && !(existingTime?.precision === "time" && sourceTime.precision === "day")) await db`UPDATE articles SET raw = jsonb_set(
+    CASE WHEN jsonb_typeof(raw) = 'object' THEN raw ELSE '{}'::jsonb END,
+    '{publicationTime}', ${db.json(sourceTime as never)})
+    WHERE id = ${existing!.id} AND published_at = ${t.publishedAt}
+      AND raw->'publicationTime' IS DISTINCT FROM ${db.json(sourceTime as never)}`;
   // What the row will hold after this report: a listing without body keeps the stored (extracted) body.
   const bodyText = m.bodyText ?? existing!.body_text;
   const excerpt = m.excerpt ?? existing!.excerpt;

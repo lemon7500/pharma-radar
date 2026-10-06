@@ -1,0 +1,484 @@
+{
+  "schemaVersion": 1,
+  "checkedAt": "2026-10-06",
+  "purpose": "editorial_reference",
+  "productionScoringEnabled": false,
+  "journals": [
+    {
+      "id": "biomedical-chromatography",
+      "name": "Biomedical Chromatography",
+      "aliases": [
+        "Biomedical chromatography : BMC",
+        "Biomed Chromatogr"
+      ],
+      "issns": [
+        "0269-3879",
+        "1099-0801"
+      ],
+      "identitySources": [
+        "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=DOI%3A%2210.1002%2Fbmc.70604%22&format=json&resultType=core&pageSize=1"
+      ],
+      "checkedAt": "2026-10-06",
+      "status": "unverified",
+      "jif": null,
+      "observedUndatedMetric": null,
+      "jcrReleaseYear": null,
+      "categories": [],
+      "categoryVerification": "unverified",
+      "editorialReferenceScore": null,
+      "notes": [
+        "本轮官方指标页面访问受限；未采用搜索摘要或第三方数值。"
+      ]
+    },
+    {
+      "id": "protein-science",
+      "name": "Protein Science",
+      "aliases": [
+        "Protein science : a publication of the Protein Society",
+        "Protein Sci"
+      ],
+      "issns": [
+        "0961-8368",
+        "1469-896X"
+      ],
+      "identitySources": [
+        "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=DOI%3A%2210.1002%2Fpro.70790%22&format=json&resultType=core&pageSize=1"
+      ],
+      "checkedAt": "2026-10-06",
+      "status": "year-unverified",
+      "jif": null,
+      "observedUndatedMetric": {
+        "label": "Impact Factor",
+        "value": 5.2,
+        "year": null,
+        "sourceUrl": "https://www.proteinsociety.org/",
+        "checkedAt": "2026-10-06"
+      },
+      "jcrReleaseYear": null,
+      "categories": [],
+      "categoryVerification": "unverified",
+      "editorialReferenceScore": null,
+      "notes": [
+        "官方页面有数值但未明确指标数据年度，不当作已核实的年度JIF。"
+      ]
+    },
+    {
+      "id": "faseb-journal",
+      "name": "The FASEB Journal",
+      "aliases": [
+        "FASEB journal : official publication of the Federation of American Societies for Experimental Biology",
+        "FASEB J"
+      ],
+      "issns": [
+        "0892-6638",
+        "1530-6860"
+      ],
+      "identitySources": [
+        "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=DOI%3A%2210.1096%2Ffj.202601498rrr%22&format=json&resultType=core&pageSize=1"
+      ],
+      "checkedAt": "2026-10-06",
+      "status": "unverified",
+      "jif": null,
+      "observedUndatedMetric": null,
+      "jcrReleaseYear": null,
+      "categories": [],
+      "categoryVerification": "unverified",
+      "editorialReferenceScore": null,
+      "notes": [
+        "本轮官方指标页面访问受限；未采用搜索摘要或第三方数值。"
+      ]
+    },
+    {
+      "id": "european-journal-of-pain",
+      "name": "European Journal of Pain",
+      "aliases": [
+        "European journal of pain (London, England)",
+        "Eur J Pain"
+      ],
+      "issns": [
+        "1090-3801",
+        "1532-2149"
+      ],
+      "identitySources": [
+        "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=DOI%3A%2210.1002%2Fejp.70391%22&format=json&resultType=core&pageSize=1"
+      ],
+      "checkedAt": "2026-10-06",
+      "status": "verified-dated",
+      "jif": {
+        "value": 3.8,
+        "year": 2025,
+        "yearBasis": "source-explicit-label",
+        "sourceUrl": "https://europeanpainfederation.eu/european-journal-of-pain/",
+        "sourceTitle": "European Journal of Pain - European Pain Federation",
+        "checkedAt": "2026-10-06",
+        "sourceQuote": "European Journal of Pain’s 2025 Impact Factor is 3.8."
+      },
+      "observedUndatedMetric": null,
+      "jcrReleaseYear": null,
+      "categories": [],
+      "categoryVerification": "unverified",
+      "editorialReferenceScore": null,
+      "notes": [
+        "只核实官方来源标注的年度JIF；未独立核实JCR发布版本、类别排名、分区或百分位。",
+        "年度按学会原文2025 Impact Factor记录；不推算JCR发布年份。"
+      ]
+    },
+    {
+      "id": "pharmacology-research-perspectives",
+      "name": "Pharmacology Research & Perspectives",
+      "aliases": [
+        "Pharmacology research & perspectives",
+        "Pharmacol Res Perspect"
+      ],
+      "issns": [
+        "2052-1707"
+      ],
+      "identitySources": [
+        "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=DOI%3A%2210.1002%2Fprp2.70320%22&format=json&resultType=core&pageSize=1"
+      ],
+      "checkedAt": "2026-10-06",
+      "status": "unverified",
+      "jif": null,
+      "observedUndatedMetric": null,
+      "jcrReleaseYear": null,
+      "categories": [],
+      "categoryVerification": "unverified",
+      "editorialReferenceScore": null,
+      "notes": [
+        "本轮官方指标页面访问受限；未采用搜索摘要或第三方数值。"
+      ]
+    },
+    {
+      "id": "journal-computer-aided-molecular-design",
+      "name": "Journal of Computer-Aided Molecular Design",
+      "aliases": [
+        "Journal of computer-aided molecular design",
+        "J Comput Aided Mol Des"
+      ],
+      "issns": [
+        "0920-654X",
+        "1573-4951"
+      ],
+      "identitySources": [
+        "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=DOI%3A%2210.1007%2Fs10822-026-00950-y%22&format=json&resultType=core&pageSize=1"
+      ],
+      "checkedAt": "2026-10-06",
+      "status": "verified-dated",
+      "jif": {
+        "value": 3,
+        "year": 2025,
+        "yearBasis": "source-explicit-label",
+        "sourceUrl": "https://link.springer.com/journal/10822",
+        "sourceTitle": "Home | Journal of Computer-Aided Molecular Design | Springer Nature Link",
+        "checkedAt": "2026-10-06",
+        "sourceQuote": "Journal Impact Factor\n3.0 (2025)"
+      },
+      "observedUndatedMetric": null,
+      "jcrReleaseYear": null,
+      "categories": [],
+      "categoryVerification": "unverified",
+      "editorialReferenceScore": null,
+      "notes": [
+        "只核实官方来源标注的年度JIF；未独立核实JCR发布版本、类别排名、分区或百分位。"
+      ]
+    },
+    {
+      "id": "aging-cell",
+      "name": "Aging Cell",
+      "aliases": [
+        "Aging cell",
+        "Aging Cell"
+      ],
+      "issns": [
+        "1474-9718",
+        "1474-9726"
+      ],
+      "identitySources": [
+        "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=DOI%3A%2210.1111%2Facel.70656%22&format=json&resultType=core&pageSize=1"
+      ],
+      "checkedAt": "2026-10-06",
+      "status": "unverified",
+      "jif": null,
+      "observedUndatedMetric": null,
+      "jcrReleaseYear": null,
+      "categories": [],
+      "categoryVerification": "unverified",
+      "editorialReferenceScore": null,
+      "notes": [
+        "本轮官方指标页面访问受限；未采用搜索摘要或第三方数值。"
+      ]
+    },
+    {
+      "id": "acta-pharmacologica-sinica",
+      "name": "Acta Pharmacologica Sinica",
+      "aliases": [
+        "Acta pharmacologica Sinica",
+        "Acta Pharmacol Sin"
+      ],
+      "issns": [
+        "1671-4083",
+        "1745-7254"
+      ],
+      "identitySources": [
+        "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=DOI%3A%2210.1038%2Fs41401-026-01942-2%22&format=json&resultType=core&pageSize=1"
+      ],
+      "checkedAt": "2026-10-06",
+      "status": "verified-dated",
+      "jif": {
+        "value": 10.4,
+        "year": 2025,
+        "yearBasis": "source-explicit-label",
+        "sourceUrl": "https://www.nature.com/aps/journal-information",
+        "sourceTitle": "Journal Information | Acta Pharmacologica Sinica",
+        "checkedAt": "2026-10-06",
+        "sourceQuote": "Journal Impact Factor: 10.4 (2025)"
+      },
+      "observedUndatedMetric": null,
+      "jcrReleaseYear": null,
+      "categories": [],
+      "categoryVerification": "unverified",
+      "editorialReferenceScore": null,
+      "notes": [
+        "只核实官方来源标注的年度JIF；未独立核实JCR发布版本、类别排名、分区或百分位。",
+        "官方top-quartile文案未标年度，不据此填2025年JCR Q1。"
+      ]
+    },
+    {
+      "id": "journal-ethnopharmacology",
+      "name": "Journal of Ethnopharmacology",
+      "aliases": [
+        "Journal of ethnopharmacology",
+        "J Ethnopharmacol"
+      ],
+      "issns": [
+        "0378-8741",
+        "1872-7573"
+      ],
+      "identitySources": [
+        "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=DOI%3A%2210.1016%2Fj.jep.2026.122435%22&format=json&resultType=core&pageSize=1"
+      ],
+      "checkedAt": "2026-10-06",
+      "status": "unverified",
+      "jif": null,
+      "observedUndatedMetric": null,
+      "jcrReleaseYear": null,
+      "categories": [],
+      "categoryVerification": "unverified",
+      "editorialReferenceScore": null,
+      "notes": [
+        "本轮官方指标页面访问受限；未采用搜索摘要或第三方数值。"
+      ]
+    },
+    {
+      "id": "nature-reviews-drug-discovery",
+      "name": "Nature Reviews Drug Discovery",
+      "aliases": [
+        "Nature reviews. Drug discovery",
+        "Nat Rev Drug Discov"
+      ],
+      "issns": [
+        "1474-1776",
+        "1474-1784"
+      ],
+      "identitySources": [
+        "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=DOI%3A%2210.1038%2Fs41573-026-01535-y%22&format=json&resultType=core&pageSize=1"
+      ],
+      "checkedAt": "2026-10-06",
+      "status": "verified-dated",
+      "jif": {
+        "value": 91.2,
+        "year": 2025,
+        "yearBasis": "source-explicit-label",
+        "sourceUrl": "https://www.nature.com/nrd/journal-impact",
+        "sourceTitle": "Journal Metrics | Nature Reviews Drug Discovery",
+        "checkedAt": "2026-10-06",
+        "sourceQuote": "Journal Impact Factor: 91.2 (2025)"
+      },
+      "observedUndatedMetric": null,
+      "jcrReleaseYear": null,
+      "categories": [],
+      "categoryVerification": "unverified",
+      "editorialReferenceScore": null,
+      "notes": [
+        "只核实官方来源标注的年度JIF；未独立核实JCR发布版本、类别排名、分区或百分位。"
+      ]
+    },
+    {
+      "id": "mini-reviews-medicinal-chemistry",
+      "name": "Mini-Reviews in Medicinal Chemistry",
+      "aliases": [
+        "Mini reviews in medicinal chemistry",
+        "Mini Rev Med Chem"
+      ],
+      "issns": [
+        "1389-5575",
+        "1875-5607"
+      ],
+      "identitySources": [
+        "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=DOI%3A%2210.2174%2F0113895575476248260922073914%22&format=json&resultType=core&pageSize=1"
+      ],
+      "checkedAt": "2026-10-06",
+      "status": "unverified",
+      "jif": null,
+      "observedUndatedMetric": null,
+      "jcrReleaseYear": null,
+      "categories": [],
+      "categoryVerification": "unverified",
+      "editorialReferenceScore": null,
+      "notes": [
+        "本轮官方指标页面访问受限；未采用搜索摘要或第三方数值。"
+      ]
+    },
+    {
+      "id": "journal-molecular-modeling",
+      "name": "Journal of Molecular Modeling",
+      "aliases": [
+        "Journal of molecular modeling",
+        "J Mol Model"
+      ],
+      "issns": [
+        "1610-2940",
+        "0948-5023"
+      ],
+      "identitySources": [
+        "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=DOI%3A%2210.1007%2Fs00894-026-06968-1%22&format=json&resultType=core&pageSize=1"
+      ],
+      "checkedAt": "2026-10-06",
+      "status": "verified-dated",
+      "jif": {
+        "value": 2.9,
+        "year": 2025,
+        "yearBasis": "source-explicit-label",
+        "sourceUrl": "https://link.springer.com/journal/894",
+        "sourceTitle": "Home | Journal of Molecular Modeling | Springer Nature Link",
+        "checkedAt": "2026-10-06",
+        "sourceQuote": "Journal Impact Factor\n2.9 (2025)"
+      },
+      "observedUndatedMetric": null,
+      "jcrReleaseYear": null,
+      "categories": [],
+      "categoryVerification": "unverified",
+      "editorialReferenceScore": null,
+      "notes": [
+        "只核实官方来源标注的年度JIF；未独立核实JCR发布版本、类别排名、分区或百分位。"
+      ]
+    },
+    {
+      "id": "phytochemistry",
+      "name": "Phytochemistry",
+      "aliases": [
+        "Phytochemistry"
+      ],
+      "issns": [
+        "0031-9422",
+        "1873-3700"
+      ],
+      "identitySources": [
+        "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=DOI%3A%2210.1016%2Fj.phytochem.2026.115096%22&format=json&resultType=core&pageSize=1"
+      ],
+      "checkedAt": "2026-10-06",
+      "status": "unverified",
+      "jif": null,
+      "observedUndatedMetric": null,
+      "jcrReleaseYear": null,
+      "categories": [],
+      "categoryVerification": "unverified",
+      "editorialReferenceScore": null,
+      "notes": [
+        "本轮官方指标页面访问受限；未采用搜索摘要或第三方数值。"
+      ]
+    },
+    {
+      "id": "chinese-medicine",
+      "name": "Chinese Medicine",
+      "aliases": [
+        "Chinese medicine",
+        "Chin Med"
+      ],
+      "issns": [
+        "1749-8546"
+      ],
+      "identitySources": [
+        "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=DOI%3A%2210.1186%2Fs13020-026-01515-9%22&format=json&resultType=core&pageSize=1"
+      ],
+      "checkedAt": "2026-10-06",
+      "status": "verified-dated",
+      "jif": {
+        "value": 7.4,
+        "year": 2025,
+        "yearBasis": "source-explicit-label",
+        "sourceUrl": "https://link.springer.com/journal/13020",
+        "sourceTitle": "Home | Chinese Medicine | Springer Nature Link",
+        "checkedAt": "2026-10-06",
+        "sourceQuote": "Journal Impact Factor\n7.4 (2025)"
+      },
+      "observedUndatedMetric": null,
+      "jcrReleaseYear": null,
+      "categories": [],
+      "categoryVerification": "unverified",
+      "editorialReferenceScore": null,
+      "notes": [
+        "只核实官方来源标注的年度JIF；未独立核实JCR发布版本、类别排名、分区或百分位。"
+      ]
+    },
+    {
+      "id": "molecular-medicine-reports",
+      "name": "Molecular Medicine Reports",
+      "aliases": [
+        "Molecular medicine reports",
+        "Mol Med Rep"
+      ],
+      "issns": [
+        "1791-2997",
+        "1791-3004"
+      ],
+      "identitySources": [
+        "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=DOI%3A%2210.3892%2Fmmr.2026.14031%22&format=json&resultType=core&pageSize=1"
+      ],
+      "checkedAt": "2026-10-06",
+      "status": "year-unverified",
+      "jif": null,
+      "observedUndatedMetric": {
+        "label": "Impact Factor",
+        "value": 5,
+        "year": null,
+        "sourceUrl": "https://www.spandidos-publications.com/mmr",
+        "checkedAt": "2026-10-06"
+      },
+      "jcrReleaseYear": null,
+      "categories": [],
+      "categoryVerification": "unverified",
+      "editorialReferenceScore": null,
+      "notes": [
+        "官方页面有数值但未明确指标数据年度，不当作已核实的年度JIF。",
+        "页面Q1明确属于CiteScore Rank，不是JCR分区。"
+      ]
+    },
+    {
+      "id": "diabetes-obesity-metabolism",
+      "name": "Diabetes, Obesity and Metabolism",
+      "aliases": [
+        "Diabetes, obesity & metabolism",
+        "Diabetes Obes Metab"
+      ],
+      "issns": [
+        "1462-8902",
+        "1463-1326"
+      ],
+      "identitySources": [
+        "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=DOI%3A%2210.1111%2Fdom.71401%22&format=json&resultType=core&pageSize=1"
+      ],
+      "checkedAt": "2026-10-06",
+      "status": "unverified",
+      "jif": null,
+      "observedUndatedMetric": null,
+      "jcrReleaseYear": null,
+      "categories": [],
+      "categoryVerification": "unverified",
+      "editorialReferenceScore": null,
+      "notes": [
+        "本轮官方指标页面访问受限；未采用搜索摘要或第三方数值。"
+      ]
+    }
+  ]
+}

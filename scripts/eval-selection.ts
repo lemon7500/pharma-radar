@@ -22,6 +22,9 @@ import {
   type AnalyzeInputArticle,
 } from "@aihot/backend/editorial/analyze";
 import { modelFor } from "@aihot/backend/editorial/models";
+import { parseSourcePublishedAt, sourcePublicationTime } from "@aihot/backend/editorial/publication-time";
+import { normalizeBibliography } from "@aihot/backend/research/profile";
+import type { Bibliography } from "@aihot/contracts/research";
 import { importSelectBenchRun } from "@aihot/backend/admin/selectbench";
 
 const { values } = parseArgs({
@@ -39,7 +42,7 @@ const { values } = parseArgs({
 
 interface GoldRow {
   caseId: string;
-  material: { title: string; originalTitle: string | null; publishedAt: string | null; sourceName: string; bodyZh: string | null; bodyOriginal: string | null };
+  material: { title: string; originalTitle: string | null; publishedAt: string | null; publishedAtSource?: string | number | null; publishedAtUnit?: string; bibliography?: Bibliography | null; sourceName: string; bodyZh: string | null; bodyOriginal: string | null };
   sourceFacts: { sourceKind: string; sourceTier?: string; firstParty?: boolean; language?: string | null };
   /** Optional: a split (e.g. development / holdout) and a stratum for reading the mistakes. */
   samplingContext?: { benchmarkSplit?: string; samplingStratum?: string };
@@ -63,6 +66,7 @@ function toInput(r: GoldRow): AnalyzeInputArticle {
   const m = r.material;
   const isX = r.sourceFacts.sourceKind === "x_search";
   const body = m.bodyOriginal || m.bodyZh || null;
+  const publishedAt = parseSourcePublishedAt(m.publishedAt);
   return {
     id: `gold-${r.caseId}`,
     revision: 1,
@@ -70,7 +74,9 @@ function toInput(r: GoldRow): AnalyzeInputArticle {
     title: m.originalTitle || m.title,
     url: "https://example.invalid/" + r.caseId,
     author: null,
-    publishedAt: m.publishedAt ? new Date(m.publishedAt) : null,
+    publishedAt,
+    sourcePublicationTime: sourcePublicationTime(m.publishedAtSource ?? (/^\d{4}-\d{2}-\d{2}$/.test(m.publishedAt ?? "") ? m.publishedAt : null), publishedAt, m.publishedAtUnit),
+    bibliography: normalizeBibliography(m.bibliography),
     bodyText: isX ? null : body,
     excerpt: null,
     xPost: isX ? { authorName: m.sourceName, handle: "", text: body ?? m.title } : null,

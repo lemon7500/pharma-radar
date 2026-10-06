@@ -1,11 +1,11 @@
 // What the judging steps read about an article: loaded once per analysis and rendered per step.
-import { beijingDate, beijingTime } from "@aihot/contracts/time";
 import { sql } from "../db.ts";
 import { collapseWhitespace, truncate } from "../lib/text.ts";
 import { produceImage } from "../media/images.ts";
 import type { ContentPart } from "../providers/llm.ts";
 import type { Bibliography, ResearchProfile } from "@aihot/contracts/research";
 import { normalizeBibliography } from "../research/profile.ts";
+import { editorialPublicationTime, storedSourcePublicationTime, type SourcePublicationTime } from "./publication-time.ts";
 
 export interface AnalyzeInputArticle {
   bibliography?: Bibliography | null;
@@ -16,7 +16,8 @@ export interface AnalyzeInputArticle {
   url: string;
   author: string | null;
   publishedAt: Date | null;
-  /** When the site first saw it (the score input's time when the source gives none). */
+  sourcePublicationTime?: SourcePublicationTime | null;
+  /** When the site first saw it; never substituted for an unknown source publication date. */
   discoveredAt?: Date | null;
   bodyText: string | null;
   excerpt: string | null;
@@ -53,17 +54,21 @@ export async function loadAnalyzeInput(articleId: string): Promise<AnalyzeInputA
     id: string; revision: number; title: string; url: string; author: string | null; published_at: Date | null; discovered_at: Date;
     body_text: string | null; excerpt: string | null; body_status: string; x_post: Record<string, any> | null; x_article: { title?: string; text?: string } | null;
     media: Array<Record<string, any>>; source_name: string; source_kind: string; tier: string; first_party: boolean; source_tags: string[]; owner_entity_id: string | null;
-    config: Record<string, any>; translation_zh: string | null; bibliography: Bibliography | null; research_material_kind: ResearchProfile["materialKind"];
+    config: Record<string, any>; translation_zh: string | null; bibliography: Bibliography | null; research_material_kind: ResearchProfile["materialKind"]; raw: Record<string, unknown> | null;
   }[]>`
-    SELECT a.id, a.revision, a.title, a.url, a.author, a.published_at, a.discovered_at, coalesce(a.research_abstract,a.body_text) AS body_text, a.excerpt, a.body_status, a.x_post, a.x_article, a.media, a.bibliography, a.research_material_kind,
+    SELECT a.id, a.revision, a.title, a.url, a.author, a.published_at, a.discovered_at, coalesce(a.research_abstract,a.body_text) AS body_text, a.excerpt, a.body_status, a.x_post, a.x_article, a.media,
+           CASE WHEN jsonb_typeof(eo.fields->'researchBibliography') = 'object' THEN eo.fields->'researchBibliography' ELSE a.bibliography END AS bibliography,
+           a.research_material_kind, a.raw,
            s.name AS source_name, s.kind AS source_kind, s.tier, s.first_party, s.tags AS source_tags, s.owner_entity_id, s.config,
            tr.body_text AS translation_zh
     FROM articles a JOIN sources s ON s.id = a.source_id
+    LEFT JOIN editorial_overrides eo ON eo.article_id = a.id
     LEFT JOIN translations tr ON tr.article_id = a.id AND tr.lang = 'zh' AND tr.revision >= a.revision
     WHERE a.id = ${articleId}`;
   if (!row) return null;
   return {
     id: row.id, revision: row.revision, title: row.title, url: row.url, author: row.author, publishedAt: row.published_at, discoveredAt: row.discovered_at,
+    sourcePublicationTime: storedSourcePublicationTime(row.raw?.publicationTime, row.published_at),
     bodyText: row.body_text, excerpt: row.excerpt, bodyStatus: row.body_status, xPost: withXArticle(row.x_post, row.x_article), media: row.media, bibliography: normalizeBibliography(row.bibliography),
     source: {
       name: row.source_name, kind: row.source_kind, tier: row.tier, firstParty: row.first_party, tags: row.source_tags, ownerEntityId: row.owner_entity_id,
@@ -88,7 +93,8 @@ export function buildMaterial(a: AnalyzeInputArticle): string {
   lines.push("<material>");
   if (a.bibliography) lines.push(`文献元数据（来源记录）：${JSON.stringify(a.bibliography)}`);
   if (a.materialKind) lines.push(`材料类型：${a.materialKind}`);
-  if (a.publishedAt) lines.push(`发布时间：${beijingDate(a.publishedAt)} ${beijingTime(a.publishedAt)}（北京时间）`);
+  const published = editorialPublicationTime(a);
+  lines.push(`发表时间：${published ?? "待确认"}`);
   if (a.author) lines.push(`作者：${a.author}`);
   if (a.xPost) {
     lines.push(`作者：${a.xPost.authorName ?? ""} (@${a.xPost.handle ?? ""})`);

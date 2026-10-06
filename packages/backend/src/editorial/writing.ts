@@ -5,6 +5,7 @@ import { IDENTITY_CONTEXT_ALIASES, IDENTITY_LEXICON, PUBLISHER_DOMAINS } from "@
 import { onlyXArticleLink } from "../sources/x.ts";
 import type { AnalyzeInputArticle } from "./input.ts";
 import { promptText } from "./prompts.ts";
+import { editorialPublicationTime } from "./publication-time.ts";
 
 export const PREFILTER_SYSTEM = promptText("prefilter");
 export const UNDERSTAND_SYSTEM = promptText("understand");
@@ -91,7 +92,7 @@ export function renderContext(a: AnalyzeInputArticle, opts: { annotateQuoted?: b
   const name = a.xPost?.authorName || a.author;
   const handle = a.xPost?.handle;
   if (name || handle) lines.push(`【作者】${[name, handle ? `@${handle}` : null].filter(Boolean).join(" · ")}`);
-  if (a.publishedAt) lines.push(`【发布时间】${a.publishedAt.toISOString()}`);
+  lines.push(`【发布时间】${editorialPublicationTime(a) ?? "待确认"}`);
   const media = (a.xPost?.media ?? a.media ?? []) as Array<{ kind?: string }>;
   const images = media.filter((m) => m.kind === "image").length;
   const videos = media.filter((m) => m.kind === "video").length;
@@ -166,6 +167,7 @@ export interface TranslateInput {
   quotedText?: string;
   quotedAuthor?: string;
   publishedAt?: Date;
+  publishedDate?: string;
 }
 
 export function translateInputOf(a: AnalyzeInputArticle): TranslateInput {
@@ -182,6 +184,7 @@ export function translateInputOf(a: AnalyzeInputArticle): TranslateInput {
     quotedText: a.xPost?.quoted?.text ? String(a.xPost.quoted.text) : undefined,
     quotedAuthor: a.xPost?.quoted?.handle ? String(a.xPost.quoted.handle) : undefined,
     publishedAt: a.publishedAt ?? undefined,
+    publishedDate: editorialPublicationTime(a)?.slice(0, 10) ?? "",
   };
 }
 
@@ -282,7 +285,7 @@ function anchorDate(d: Date | undefined): string {
 
 export function buildArticlePrompt(input: TranslateInput): string {
   return promptText("summarize-article", {
-    publishedDate: anchorDate(input.publishedAt),
+    publishedDate: input.publishedDate ?? anchorDate(input.publishedAt),
     today: anchorDate(new Date()),
     sourceName: sourceName(input.sourceName),
     identity: identityPrompt(input),

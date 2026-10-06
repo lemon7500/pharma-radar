@@ -53,6 +53,8 @@ jobs:
         run: npm ci --no-audit --no-fund
       - name: Typecheck
         run: npm run typecheck
+      - name: Editorial reference integrity
+        run: node scripts/check-editorial-reference.mjs
       - name: Build web
         run: npm run build -w @aihot/web
       - name: Web tests

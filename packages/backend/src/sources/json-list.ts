@@ -5,6 +5,7 @@ import { collapseWhitespace, stripTags } from "../lib/text.ts";
 import { FetchError, type Candidate, type SourceRow } from "./types.ts";
 import { europePmcBibliography } from "../research/profile.ts";
 import { scientificText } from "../research/material.ts";
+import { parseSourcePublishedAt, sourcePublicationTime } from "../editorial/publication-time.ts";
 
 export function getPath(obj: unknown, path: string): unknown {
   if (!path) return obj;
@@ -42,17 +43,7 @@ export function renderTemplate(template: string, item: unknown): string | null {
 }
 
 function toDate(v: unknown, unit: string | undefined): Date | null {
-  if (v === null || v === undefined || v === "") return null;
-  if (unit === "epoch_ms") return new Date(Number(v));
-  if (unit === "epoch_s") return new Date(Number(v) * 1000);
-  // 20260922: a calendar day at UTC midnight (some list APIs give dates as yyyymmdd).
-  if (unit === "yyyymmdd") {
-    const m = /^(\d{4})(\d{2})(\d{2})$/.exec(String(v).trim());
-    const d = m ? new Date(`${m[1]}-${m[2]}-${m[3]}T00:00:00Z`) : null;
-    return d && Number.isFinite(d.getTime()) && d.toISOString().startsWith(`${m![1]}-${m![2]}-${m![3]}`) ? d : null;
-  }
-  const t = Date.parse(String(v));
-  return Number.isFinite(t) ? new Date(t) : null;
+  return parseSourcePublishedAt(v, unit);
 }
 
 function findKey(obj: unknown, key: string, depth = 0): unknown {
@@ -178,16 +169,18 @@ export function jsonListCandidates(source: SourceRow, data: unknown): Candidate[
     const summaryIsBody = c.summaryIsBody === true && !!summary;
     const isEuropePmc = isEuropePmcSource(source);
     const clean = isEuropePmc ? scientificText : stripTags;
+    const publishedValue = getPath(item, c.publishedAtPath);
+    const publishedAt = toDate(publishedValue, c.publishedAtUnit);
     out.push({
       url,
       title: collapseWhitespace(scientificText(title)),
       author: firstString(item, c.authorPaths),
-      publishedAt: toDate(getPath(item, c.publishedAtPath), c.publishedAtUnit),
+      publishedAt,
       excerpt: summary ? collapseWhitespace(clean(summary)).slice(0, 2000) : null,
       bodyText: summaryIsBody ? clean(summary!) : null,
       bodyStatus: summaryIsBody ? "ok" : "pending",
       ...(isEuropePmc ? { bibliography: europePmcBibliography(item) } : {}),
-      raw: { externalId: externalId ?? null },
+      raw: { externalId: externalId ?? null, publicationTime: sourcePublicationTime(publishedValue, publishedAt, c.publishedAtUnit) },
     });
   }
   if (items.length > 0 && out.length === 0 && !c.requireBoolean && !c.minNumeric) throw new FetchError("no items mapped (check title/url paths)");

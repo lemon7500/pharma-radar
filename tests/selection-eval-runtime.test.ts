@@ -8,12 +8,17 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { closeDb, sql } from "@aihot/backend/db";
 import { REPO_ROOT } from "@aihot/backend/config";
+import { buildScoreInput } from "@aihot/backend/editorial/analyze";
+import { loadAnalyzeInput } from "@aihot/backend/editorial/input";
+import { sourcePublicationTime } from "@aihot/backend/editorial/publication-time";
+import { upsertMaterial } from "@aihot/backend/content/materials";
+import type { Bibliography } from "@aihot/contracts/research";
 
 const exec = promisify(execFile);
 
 interface GoldRow {
   caseId: string;
-  material: { title: string; originalTitle: null; publishedAt: string; sourceName: string; bodyZh: null; bodyOriginal: string };
+  material: { title: string; originalTitle: null; publishedAt: string | null; publishedAtSource?: string | null; bibliography?: Bibliography | null; sourceName: string; bodyZh: null; bodyOriginal: string };
   sourceFacts: { sourceKind: "rss"; sourceTier: string; firstParty: boolean; language: "en" };
   samplingContext?: { benchmarkSplit?: string; samplingStratum?: string };
   gold: { decision: "select" | "reject" };
@@ -171,5 +176,41 @@ test("custom split names cannot escape the evaluation output directory", async (
     assert.ok(path.basename(result.reportPath).startsWith("selection-outside-1-"));
     assert.equal(result.meta.split, split, "metadata keeps the original user-supplied split");
     assert.equal(score.hits(), 0);
+  });
+});
+
+test("evaluation and production preserve the same date-only, exact and unknown source date inputs", async (t) => {
+  await withoutModelOverrides(async () => {
+    const prefilter = await stub(() => ({ choices: [{ message: { content: JSON.stringify({label:"PASS",reason:"relevant"}) } }] }));
+    const scoreInputs: string[] = [];
+    const score = await stub((_hit, req) => {
+      const body = JSON.parse(req.body) as {messages:Array<{content:string}>};
+      scoreInputs.push(body.messages.at(-1)!.content);
+      return {choices:[{message:{content:JSON.stringify({attentionScore:70})}}]};
+    });
+    t.after(async () => { await Promise.all([prefilter.close(),score.close()]); });
+    const marker = tag(), sourceId = `eval-clock-${marker}`;
+    await sql`INSERT INTO sources(id,name,kind,tier,participation_mode) VALUES(${sourceId},'Date precision test','rss','T1_5','editorial')`;
+    const dates = [{publishedAt:"2026-10-01"},{publishedAt:"2026-10-01T00:00:00Z",publishedAtSource:"2026-10-01T00:00:00Z"},{publishedAt:null},{publishedAt:"2026-10-01T00:00:00.000Z"},{publishedAt:"2026-10-01T01:35:00Z",publishedAtSource:"2026-10-01T01:35:00Z",bibliography:{doi:null,pmid:null,authors:[],journal:"Test Journal",publishedDate:"2020-01-02",publicationTypes:[],isPreprint:false}}];
+    const rows: GoldRow[] = dates.map((date,i) => {
+      const item = row(`${marker}-${i}`,`${marker}-case-${i}`,"T1_5","select");
+      return {...item,material:{...item.material,...date}};
+    });
+    const productionInputs: string[] = [];
+    for (const [i,item] of rows.entries()) {
+      const at = item.material.publishedAt ? new Date(item.material.publishedAt) : null;
+      const sourceValue = item.material.publishedAtSource ?? (/^\d{4}-\d{2}-\d{2}$/.test(item.material.publishedAt ?? "") ? item.material.publishedAt : null);
+      const {articleId} = await upsertMaterial({sourceId,url:`https://example.org/${marker}/${i}`,title:item.material.title,bodyText:item.material.bodyOriginal,publishedAt:at,bibliography:item.material.bibliography,via:"fetch",raw:{publicationTime:sourcePublicationTime(sourceValue,at)}});
+      productionInputs.push(buildScoreInput((await loadAnalyzeInput(articleId))!));
+    }
+    const result = await evaluate(rows,{prefilter:prefilter.url,score:score.url});
+    assert.equal(result.summary.errors,0);
+    assert.equal(scoreInputs.length,10);
+    for (const input of productionInputs) assert.equal(scoreInputs.filter(value=>value===input).length,2,"each source precision reaches both evaluations without a different production representation");
+    assert.match(productionInputs[0]!,/】\n2026-10-01\n\n/);
+    assert.match(productionInputs[1]!,/2026-10-01T08:00:00\+08:00/);
+    assert.match(productionInputs[2]!,/】\n待确认\n\n/);
+    assert.match(productionInputs[3]!,/】\n2026-10-01\n\n/,"a normalized legacy midnight timestamp is not proof of a real source clock");
+    assert.match(productionInputs[4]!,/】\n2020-01-02\n\n/,"a newer RSS timestamp cannot erase a verified older bibliographic publication date");
   });
 });
