@@ -6,6 +6,7 @@ import { sql, closeDb } from "@aihot/backend/db";
 import { stopBoss } from "@aihot/backend/jobs/queue";
 import { upsertMaterial } from "@aihot/backend/content/materials";
 import { publishArticle } from "@aihot/backend/publication/publish";
+import { overrideFields } from "@aihot/backend/admin/content";
 import { processArticle } from "@aihot/backend/jobs/content";
 import { validateResearchExtraction } from "@aihot/backend/research/profile";
 import { loadPool } from "@aihot/backend/publication/pool";
@@ -165,4 +166,96 @@ test("index publishes without a model, then promotes at the same ID and retains 
   const [blocked] = await sql`SELECT eligible,index_only FROM publications WHERE article_id=${u.articleId}`;
   assert.equal(blocked.eligible, false); assert.equal(blocked.index_only, false);
   assert.equal((await sql`SELECT 1 FROM pool_search WHERE article_id=${u.articleId}`).length, 0);
+});
+
+async function editorialIndex(text: string, publicationTypes = ["Journal Article"]) {
+  const key = `early-manual-${randomUUID()}`;
+  const pmid = String(parseInt(randomUUID().replaceAll("-", "").slice(0,8),16));
+  const bibliography = { ...b, pmid, doi: `10.1234/${key}`, publicationTypes };
+  await sql`INSERT INTO sources(id,name,kind,tier,participation_mode,config,next_fetch_at)
+    VALUES(${key},'Manual index review','json_list','T1','editorial',${sql.json(source.config)},'2100-01-01')`;
+  const title = `Drug discovery manually reviewed ${key}`;
+  const { articleId } = await upsertMaterial({ sourceId: key, url: `https://europepmc.org/article/MED/${pmid}`, title,
+    bibliography, bodyText: text, bodyStatus: "ok", publishedAt: now, via: "fetch" });
+  await publishArticle(articleId, { now });
+  const [initial] = await sql`SELECT eligible,index_only,summary FROM publications WHERE article_id=${articleId}`;
+  assert.equal(initial!.eligible, true); assert.equal(initial!.index_only, true); assert.equal(initial!.summary, INDEX_CONTENT_SUMMARY);
+  assert.equal((await sql`SELECT 1 FROM analyses WHERE article_id=${articleId}`).length, 0);
+  return { articleId, key };
+}
+
+test("an explicit audited relevance pass publishes manual research from an index without inventing an analysis", async () => {
+  const object = "We studied candidate molecules for drug discovery.";
+  const methods = "We tested the candidates in cultured cells in vitro.";
+  const results = "Treatment reduced cell viability compared with the control.";
+  const { articleId, key } = await editorialIndex(`${object} ${methods} ${results}`);
+  const title = `人工核对的体外药物研究 ${key}`, summary = "候选物在体外细胞实验中降低细胞活力，尚不能推断人体疗效。";
+  const research = { evidenceStages: [{ value: "in-vitro", quote: methods }], claims: {
+    object: { text: "研究药物候选分子。", quote: object }, methods: { text: "开展体外细胞实验。", quote: methods },
+    results: { text: "与对照相比，处理降低细胞活力。", quote: results },
+  } };
+  await overrideFields(articleId, { fields: { title, summary, research, selected: false }, reason: "核对研究材料，关联尚未裁定", version: 0 }, "test-editor");
+  const [unjudged] = await sql`SELECT index_only,research FROM publications WHERE article_id=${articleId}`;
+  assert.equal(unjudged!.index_only, true); assert.equal(unjudged!.research.status, "pending");
+  await overrideFields(articleId, { fields: { relevance: "pass" }, reason: "确认药学关联并发布已核对导读", version: 1 }, "test-editor");
+  const [publication] = await sql`SELECT * FROM publications WHERE article_id=${articleId}`;
+  assert.equal(publication!.analysis_id, null); assert.equal(publication!.index_only, false); assert.equal(publication!.eligible, true);
+  assert.equal(publication!.title, title); assert.equal(publication!.summary, summary); assert.equal(publication!.research.status, "ready");
+  assert.deepEqual(publication!.research.evidenceStages, ["in-vitro"]); assert.equal(publication!.research.claims.results, research.claims.results.text);
+  assert.equal(publication!.first_public_at.toISOString(), now.toISOString());
+  const pool = await loadPool({ channel: "all", category: null, tag: null, q: key });
+  assert.equal(pool.items.find(item => item.id === articleId)?.summary, summary);
+  const detail = await loadItemDetail(articleId); assert.equal(detail.kind, "found");
+  if (detail.kind !== "found") throw Error("missing manual research");
+  assert.equal(detail.detail.summary, summary); assert.equal(detail.detail.research?.status, "ready");
+  assert.deepEqual(detail.detail.research?.evidenceStages, ["in-vitro"]);
+  const [override] = await sql`SELECT fields,version FROM editorial_overrides WHERE article_id=${articleId}`;
+  assert.equal(override!.version, 2); assert.equal(override!.fields.relevance, "pass");
+  const [audit] = await sql`SELECT actor,reason,"after" FROM audit_log WHERE subject=${`content:${articleId}`} AND action='content.override' ORDER BY id DESC LIMIT 1`;
+  assert.equal(audit!.actor, "test-editor"); assert.equal(audit!.reason, "确认药学关联并发布已核对导读"); assert.equal(audit!.after.relevance, "pass");
+  await assert.rejects(overrideFields(articleId, { fields: { relevance: "block" }, reason: "旧版本修改", version: 1 }, "test-editor"), /刷新/);
+  await assert.rejects(overrideFields(articleId, { fields: { relevance: "block" }, reason: "", version: 2 }, "test-editor"), /reason is required/);
+  assert.equal((await sql`SELECT 1 FROM analyses WHERE article_id=${articleId}`).length, 0);
+  await overrideFields(articleId, { fields: {}, clear: ["relevance"], reason: "撤销人工关联判定，恢复待确认索引", version: 2 }, "test-editor");
+  const [cleared] = await sql`SELECT index_only,selected,research,first_public_at FROM publications WHERE article_id=${articleId}`;
+  assert.equal(cleared!.index_only, true); assert.equal(cleared!.research.status, "pending"); assert.equal(cleared!.selected, false);
+  assert.equal(cleared!.first_public_at.toISOString(), now.toISOString());
+  const [retained] = await sql`SELECT fields,version FROM editorial_overrides WHERE article_id=${articleId}`;
+  assert.equal(retained!.version, 3); assert.equal(retained!.fields.relevance, undefined); assert.equal(retained!.fields.research.status, "ready");
+  assert.equal(retained!.fields.research.claims.results, research.claims.results.text); assert.ok(retained!.fields.researchSupport);
+  assert.equal((await sql`SELECT 1 FROM analyses WHERE article_id=${articleId}`).length, 0);
+});
+
+test("relevance approval of a short publisher report cannot make incomplete research ready or selected", async () => {
+  const quote = "This publisher report describes a drug delivery strategy aimed at releasing payloads at the target cell surface.";
+  const { articleId, key } = await editorialIndex(quote + " The acquired preview contains only a general description of this strategy.", ["Research Highlight"]);
+  await overrideFields(articleId, { fields: { relevance: "pass", title: `药物递送研究简讯 ${key}`, summary: "简讯只提供策略概述，具体方法和结果待核对。", selected: true,
+    research: { claims: { object: { text: "简讯报道细胞表面载荷释放的药物递送策略。", quote } } } }, reason: "确认主题关联，保留材料不足限定", version: 0 }, "test-editor");
+  const [publication] = await sql`SELECT eligible,index_only,selected,research,analysis_id FROM publications WHERE article_id=${articleId}`;
+  assert.equal(publication!.eligible, true); assert.equal(publication!.index_only, false); assert.equal(publication!.selected, false);
+  assert.equal(publication!.analysis_id, null); assert.equal(publication!.research.status, "pending"); assert.equal(publication!.research.origin, "secondary");
+  assert.equal(publication!.research.materialKind, "publisher-summary"); assert.equal(publication!.research.claims.results, null);
+  const detail = await loadItemDetail(articleId); assert.equal(detail.kind, "found");
+  if (detail.kind !== "found") throw Error("missing short report");
+  assert.equal(detail.detail.research?.status, "pending"); assert.equal(detail.detail.selected, false);
+  assert.equal((await sql`SELECT 1 FROM analyses WHERE article_id=${articleId}`).length, 0);
+});
+
+test("an audited relevance block removes an early index from the pool without inventing an analysis", async () => {
+  const { articleId, key } = await editorialIndex("This candidate discovery record needs a manual assessment of its pharmacy scope. ".repeat(2));
+  await overrideFields(articleId, { fields: { relevance: "block" }, reason: "核对后确定没有本站要求的药学关联", version: 0 }, "test-editor");
+  const [publication] = await sql`SELECT eligible,index_only,selected,analysis_id FROM publications WHERE article_id=${articleId}`;
+  assert.equal(publication!.eligible, false); assert.equal(publication!.index_only, false); assert.equal(publication!.selected, false); assert.equal(publication!.analysis_id, null);
+  assert.equal((await sql`SELECT 1 FROM pool_search WHERE article_id=${articleId}`).length, 0);
+  assert.ok(!(await loadPool({ channel: "all", category: null, tag: null, q: key })).items.some(item => item.id === articleId));
+  const [audit] = await sql`SELECT "after" FROM audit_log WHERE subject=${`content:${articleId}`} AND action='content.override' ORDER BY id DESC LIMIT 1`;
+  assert.equal(audit!.after.relevance, "block"); assert.equal((await sql`SELECT 1 FROM analyses WHERE article_id=${articleId}`).length, 0);
+});
+
+test("an invalid manual relevance verdict is rejected before creating an override or audit", async () => {
+  const { articleId } = await editorialIndex("This drug discovery record retains only source metadata until its material is reviewed. ".repeat(2));
+  await assert.rejects(overrideFields(articleId, { fields: { relevance: "maybe" }, reason: "非法关联值", version: 0 }, "test-editor"), error => !!error && typeof error === "object" && "issues" in error);
+  assert.equal((await sql`SELECT 1 FROM editorial_overrides WHERE article_id=${articleId}`).length, 0);
+  assert.equal((await sql`SELECT 1 FROM audit_log WHERE subject=${`content:${articleId}`} AND action='content.override'`).length, 0);
+  assert.equal((await sql`SELECT index_only FROM publications WHERE article_id=${articleId}`)[0]!.index_only, true);
 });

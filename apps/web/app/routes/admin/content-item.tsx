@@ -55,7 +55,7 @@ export default function ContentItem({ loaderData }: Route.ComponentProps) {
   const { run, pending } = useAdminAction();
   const [dialog, setDialog] = useState<Dialog>(null);
   const [visibility, setVisibility] = useState<string>(p?.visibility ?? "public");
-  const [fields, setFields] = useState({ title: "", summary: "", reason: "", category: "", tags: "", selected: "", silent: "" });
+  const [fields, setFields] = useState({ title: "", summary: "", reason: "", category: "", tags: "", relevance: "", selected: "", silent: "" });
   const [mergeInto, setMergeInto] = useState("");
   const version = c.override?.version ?? 0;
   const base = `/api/admin/content/${encodeURIComponent(a.id)}`;
@@ -70,6 +70,7 @@ export default function ContentItem({ loaderData }: Route.ComponentProps) {
       reason: String(f.reason ?? ""),
       category: String(f.category ?? ""),
       tags: Array.isArray(f.tags) ? (f.tags as string[]).join(", ") : "",
+      relevance: f.relevance === "pass" || f.relevance === "block" ? f.relevance : "",
       selected: f.selected === undefined ? "" : String(f.selected),
       silent: f.silent === undefined ? "" : String(f.silent),
     });
@@ -361,6 +362,8 @@ export default function ContentItem({ loaderData }: Route.ComponentProps) {
           else if (c.override?.fields.category !== undefined) clear.push("category");
           if (fields.tags.trim()) next.tags = fields.tags.split(/[,，]/).map((t) => t.trim()).filter(Boolean);
           else if (c.override?.fields.tags !== undefined) clear.push("tags");
+          if (fields.relevance === "pass" || fields.relevance === "block") next.relevance = fields.relevance;
+          else if (c.override?.fields.relevance !== undefined) clear.push("relevance");
           for (const k of ["selected", "silent"] as const) {
             if (fields[k] === "true" || fields[k] === "false") next[k] = fields[k] === "true";
             else if (c.override?.fields[k] !== undefined) clear.push(k);
@@ -379,6 +382,13 @@ export default function ContentItem({ loaderData }: Route.ComponentProps) {
             </Select>
           </Field>
           <Field label="标签（逗号分隔）"><Input value={fields.tags} onChange={(e) => setFields({ ...fields, tags: e.target.value })} /></Field>
+          <Field label="药学关联" hint="仅确认收录范围，与导读完整度和精选独立。选择“沿用自动判断”会清除已有人工判断。">
+            <Select value={fields.relevance} onChange={(e) => setFields({ ...fields, relevance: e.target.value })}>
+              <option value="">沿用自动判断</option>
+              <option value="pass">已确认药学关联</option>
+              <option value="block">不符合收录范围</option>
+            </Select>
+          </Field>
           <Field label="精选">
             <Select value={fields.selected} onChange={(e) => setFields({ ...fields, selected: e.target.value })}>
               <option value="">按模型</option>
