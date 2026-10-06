@@ -39,6 +39,7 @@ try {
   process.env.WEB_HOST = '0.0.0.0';
   process.env.WEB_PORT = process.env.PORT || process.env.WEB_PORT || '10000';
   process.env.WORKER_STALE_MINUTES ||= '180';
+  process.env.AIHOT_RELEASE ||= process.env.RENDER_GIT_COMMIT || 'dev';
   start('apps/api/src/main.ts');
   let ready=false;
   for(let i=0;i<60 && !stopping;i++) {
