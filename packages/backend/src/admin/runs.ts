@@ -8,11 +8,12 @@ import { CAPABILITIES } from "../editorial/models.ts";
 import { researchBackfillPaused } from "../research/backfill.ts";
 import { RESEARCH_PROCESSING_VERSION } from "../research/material.ts";
 import { readServiceBudget } from "../providers/budget.ts";
+import { publicationLatency } from "./publication-latency.ts";
 
 const STALE_HEARTBEAT_MS = 3 * 60_000;
 
 export async function runsOverview() {
-  const [heartbeats, latest, timeline, queues, failedJobs, lagging, receipts, receiptIssues, deliveries, errors, ingest, leaderboard] = await Promise.all([
+  const [heartbeats, latest, timeline, queues, failedJobs, lagging, receipts, receiptIssues, deliveries, errors, ingest, leaderboard, latency] = await Promise.all([
     sql<{ key: string; value: Record<string, unknown>; updated_at: Date }[]>`SELECT key, value, updated_at FROM settings WHERE key LIKE 'heartbeat.%' ORDER BY key`,
     sql`
       WITH latest AS (
@@ -57,6 +58,7 @@ export async function runsOverview() {
     sql`SELECT client, kind, status, left(error, 200) AS error, summary, created_at FROM ingest_events ORDER BY created_at DESC LIMIT 20`,
     sql<{ value: { at: string; sources: Record<string, { ok: boolean; at: string; lastOkAt: string | null; changed?: boolean; rows?: number; error?: string }> } }[]>`
       SELECT value FROM settings WHERE key = 'leaderboard.fetch'`,
+    publicationLatency(),
   ]);
   // Articles waiting to retry after a passing provider problem (they are not failed).
   const [retrying] = await sql<{ n: number; next: Date | null }[]>`
@@ -77,6 +79,7 @@ export async function runsOverview() {
     SELECT queue,reason,service,count(*)::int AS n,min(next_retry_at) AS next,min(created_at) AS oldest
     FROM event_job_deferrals GROUP BY queue,reason,service ORDER BY next`;
   return {
+    publicationLatency: latency,
     deferredEvents,
     modelBudget: await readServiceBudget('llm'),
     research:{...research,...modelUsage!,rejectedFields,processingVersion:RESEARCH_PROCESSING_VERSION,paused:await researchBackfillPaused(),pauseReason:(await sql`SELECT value->>'reason' AS reason FROM settings WHERE key='research.backfill.paused'`)[0]?.reason || null},

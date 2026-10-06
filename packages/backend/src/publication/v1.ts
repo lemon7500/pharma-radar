@@ -49,8 +49,8 @@ export async function v1Items(query: V1ItemsQuery, now = new Date()): Promise<V1
   const scope = query.mode === "selected" ? selectedCondition(now) : sql`${listedCondition(now)} AND p.eligible`;
   const terms = query.q ? searchTerms(query.q) : [];
 
-  const run = (db: Db) => db<(ApiItemRow & { sort_at: Date })[]>`
-    SELECT ${API_ITEM_COLUMNS}, ${sortCol} AS sort_at ${API_ITEM_FROM}
+  const run = (db: Db) => db<(ApiItemRow & { sort_at: Date; visible_after: Date | null })[]>`
+    SELECT ${API_ITEM_COLUMNS}, p.visible_after, ${sortCol} AS sort_at ${API_ITEM_FROM}
     WHERE ${scope} ${categoryCondition(query.category, true)} ${publicMatchCondition(terms)}
       AND ${sortCol} >= ${windowStart} AND ${sortCol} <= ${now}
       ${after ? sql`AND (${sortCol}, p.article_id) < (${new Date(after.a)}, ${after.i})` : sql``}
@@ -67,7 +67,7 @@ export async function v1Items(query: V1ItemsQuery, now = new Date()): Promise<V1
       mode: query.mode, category: query.category, window: query.window, q: query.q, by: query.by,
       ordering: query.by === "published" ? "publishedAtDesc" : "timelineDesc",
     },
-    items: page.map(rowToV1),
+    items: page.map(row => rowToV1({ ...row, selected: row.selected && !!row.visible_after && row.visible_after <= now })),
     page: {
       count: page.length,
       hasMore,

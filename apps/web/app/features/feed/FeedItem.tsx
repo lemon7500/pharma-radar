@@ -10,6 +10,7 @@ import { ScoreLabel } from "../../components/ui/Score";
 import { MediaThumbs, SourceLine, StarButton } from "./parts";
 import { GroupDevelopments, GroupSources, LatestDevelopment } from "./ReadingGroup";
 import { QuotedLine } from "../item/QuotedPost";
+import { ResearchRecord } from "../research/ResearchRecord";
 
 export interface FeedItemProps {
   item: FeedItemSummary;
@@ -22,6 +23,7 @@ export interface FeedItemProps {
 }
 
 export const FeedItem = memo(function FeedItem({ item, group, filters, read = false, onOpen, showTags = false }: FeedItemProps) {
+  if (item.contentStage === "index") return <ResearchRecord item={item} read={read} onOpen={onOpen} />;
   const isX = item.channel === "x" && !!item.x;
   const open = () => onOpen?.(item.id);
   const showSources = !!group && (group.additionalSourceCount > 0 || (group.developmentCount <= 1 && group.reportCount > 1));

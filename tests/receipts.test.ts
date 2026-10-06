@@ -25,11 +25,18 @@ const ask = (subject: string) =>
   chatJson({ model: "deepseek-flash", purpose: "invariant_test", subject, promptVersion: "t1", system: "s", user: `input ${subject}`, schema: z.object({ ok: z.boolean() }) });
 
 let savedBudget: { per_minute: number; per_hour: number; per_day: number } | undefined;
+let savedReserve: Record<string, unknown> | undefined;
 before(async () => {
   [savedBudget] = await sql<{ per_minute: number; per_hour: number; per_day: number }[]>`SELECT per_minute, per_hour, per_day FROM budgets WHERE service = 'deepseek'`;
+  // This suite isolates total-cap behavior; the new reserve policy has its own
+  // full paid-request/concurrency suite and is restored before later files run.
+  const [reserve] = await sql`SELECT value FROM settings WHERE key='processing.request-reserve'`;
+  savedReserve = reserve?.value;
+  if (savedReserve) await sql`UPDATE settings SET value=${sql.json({ ...savedReserve, enabled: false })} WHERE key='processing.request-reserve'`;
 });
 after(async () => {
   if (savedBudget) await sql`UPDATE budgets SET per_minute = ${savedBudget.per_minute}, per_hour = ${savedBudget.per_hour}, per_day = ${savedBudget.per_day} WHERE service = 'deepseek'`;
+  if (savedReserve) await sql`UPDATE settings SET value=${sql.json(savedReserve as never)} WHERE key='processing.request-reserve'`;
   await provider.close();
   await stopBoss();
   await closeDb();

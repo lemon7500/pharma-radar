@@ -91,7 +91,7 @@ export async function loadItemDetail(id: string, now = new Date()): Promise<Deta
       zhKind: summary.x?.translation ? "translation" : null,
       complete: true,
     };
-  } else if (row.body_mode === "full" && row.body_html) {
+  } else if (!row.index_only && row.body_mode === "full" && row.body_html) {
     const isZh = row.language === "zh" || (/[一-鿿]/.test(row.body_text?.slice(0, 400) ?? "") && row.language !== "en");
     const original = proxyBodyImages(row.body_html);
     const zh = isZh ? original : row.tr_html ? proxyBodyImages(row.tr_html) : null;
@@ -187,7 +187,8 @@ export async function exportMarkdown(id: string): Promise<{ filename: string; bo
     if (r.materialSources?.length) lines.push("");
     if (r.status === "ready" && row.summary) lines.push("## 阅读概要", "", row.summary, "");
     if (r.status === "ready" && row.reason) lines.push("## 为什么值得读", "", row.reason, "");
-    for (const c of RESEARCH_CLAIMS) lines.push(`## ${r.documentType === "review" && c.key === "results" ? "综述要点" : c.label}`, "", r.claims[c.key] || "已获取材料未提供足够依据。", "");
+    if (row.index_only) lines.push("## 整理状态", "", "文献信息已收录，研究导读整理中。请先阅读来源原文。", "");
+    else for (const c of RESEARCH_CLAIMS) lines.push(`## ${r.documentType === "review" && c.key === "results" ? "综述要点" : c.label}`, "", r.claims[c.key] || "已获取材料未提供足够依据。", "");
   } else {
     if (row.summary) lines.push("## 摘要", "", row.summary, "");
     if (row.selected && row.reason) lines.push("## 推荐理由", "", row.reason, "");

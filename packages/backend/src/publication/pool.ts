@@ -130,7 +130,7 @@ export async function loadPool(query: PoolQuery): Promise<PoolResponse> {
   const filters = sql`${channelCondition(query.channel)} ${categoryCondition(query.category)} ${tagCondition(query.tag)} ${topicCondition(query.topicTags)} ${researchCondition(query)}
     ${from ? sql`AND (${at}) >= ${beijingMidnight(from)}` : sql``}
     ${to ? sql`AND (${at}) < ${beijingMidnight(addDays(to, 1))}` : sql``}
-    ${query.selectedOnly ? sql`AND p.selected AND p.research->>'status' = 'ready' AND p.research->>'basis' <> 'insufficient'` : sql``}`;
+    ${query.selectedOnly ? sql`AND p.selected AND p.visible_after <= ${now} AND p.research->>'status' = 'ready' AND p.research->>'basis' <> 'insufficient'` : sql``}`;
   const direction = query.sort === "oldest" ? sql`ASC` : sql`DESC`;
   const offset = (page - 1) * POOL_PAGE_SIZE;
   const cap = POOL_MAX_PAGES * POOL_PAGE_SIZE;
@@ -215,7 +215,7 @@ export async function loadPool(query: PoolQuery): Promise<PoolResponse> {
     filters: { channel: query.channel, category: query.category, tag: query.tag, topic: query.topic ?? null, q, tab,
       ...Object.fromEntries(Object.entries(query).filter(([key]) => ["area", "focus", "docType", "evidence", "origin"].includes(key))), sort: query.sort ?? "newest",
       ...(query.timeBasis ? { timeBasis: query.timeBasis, from, to, selectedOnly: query.selectedOnly ?? false } : {}) },
-    items: rows.map(toFeedItemSummary),
+    items: rows.map(row => toFeedItemSummary(row, now)),
     page,
     pageCount: Math.min(POOL_MAX_PAGES, Math.max(1, Math.ceil(total / POOL_PAGE_SIZE))),
     total,

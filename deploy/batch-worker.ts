@@ -2,7 +2,7 @@
 import { setTimeout as delay } from "node:timers/promises";
 import { assertProductionSecrets } from "@aihot/backend/config";
 import { closeDb, sql } from "@aihot/backend/db";
-import { getBoss, recordRun, stopBoss } from "@aihot/backend/jobs/queue";
+import { getBoss, QUEUES, recordRun, stopBoss } from "@aihot/backend/jobs/queue";
 import { registerContentJobs, sweepUnprocessed } from "@aihot/backend/jobs/content";
 import { registerSourceJobs } from "@aihot/backend/jobs/sources";
 import { registerEventJobs } from "@aihot/backend/jobs/events";
@@ -20,7 +20,8 @@ import { markStalePendingReceipts } from "@aihot/backend/providers/receipts";
 import { backfillResearch } from "@aihot/backend/research/backfill";
 import { readServiceBudget } from "@aihot/backend/providers/budget";
 import { importLegacyEventDeferrals, recoverDeferredEventJobs } from "@aihot/backend/jobs/event-deferrals";
-import { ARTICLE_QUEUES, EVENT_QUEUES, pendingPriorityWork, runWithBudgetWaiting } from "@aihot/backend/jobs/priority";
+import { ARTICLE_QUEUES, EVENT_QUEUES, pendingPriorityWork, pendingRecentPriorityWork, runWithBudgetWaiting } from "@aihot/backend/jobs/priority";
+import { observePublicReleaseTimes } from "@aihot/backend/publication/publish";
 
 assertProductionSecrets([["auth", "IMG_PROXY_SIGN_SECRET"]]);
 const maximumMinutes = Number(process.env.BATCH_MAX_MINUTES || 20);
@@ -41,17 +42,28 @@ process.on("SIGTERM",()=>void shutdown());process.on("SIGINT",()=>void shutdown(
 // Leave time for the existing 195 s graceful shutdown before Actions' job timeout.
 const hardStop = setTimeout(()=>void shutdown(), maximumMinutes * 60_000);
 hardStop.unref();
-async function drain(names: string[]) {
+async function drain(names: string[], recentOnly = false) {
   let quiet = 0, lastSweep = Date.now();
+  const pending = () => recentOnly ? pendingRecentPriorityWork(names) : pendingPriorityWork(names);
   while (Date.now() < deadline - 240_000 && quiet < 3) {
     if (names.includes('content.analyze') && Date.now()-lastSweep >= 30_000) {
       await sweepUnprocessed();
       lastSweep = Date.now();
     }
-    quiet = await pendingPriorityWork(names) === 0 ? quiet + 1 : 0;
+    quiet = await pending() === 0 ? quiet + 1 : 0;
     await delay(10_000);
   }
-  return await pendingPriorityWork(names) === 0;
+  return await pending() === 0;
+}
+async function drainEvents() {
+  let quiet = 0;
+  while (Date.now() < deadline - 240_000 && quiet < 3) {
+    // Collection/extraction stay live; switch back rather than leave newly ready research waiting.
+    if (await pendingRecentPriorityWork(ARTICLE_QUEUES)) return;
+    // Grouping debounces the digest by 60s; keep its near-due job inside this batch.
+    quiet = await pendingPriorityWork(EVENT_QUEUES) === 0 ? quiet + 1 : 0;
+    await delay(10_000);
+  }
 }
 try {
   const boss = await getBoss();
@@ -62,12 +74,13 @@ try {
   await registerNotifyJobs(boss);
   await registerPublicationJobs(boss);
   heartbeat = startHeartbeat("worker");
+  await recordRun("publication.observe", observePublicReleaseTimes);
   await recordRun("batch.recover", async()=>({stale:await markStalePendingReceipts(),released:await autoReleaseUnknownReceipts()}));
   if (process.env.COLLECT_ENABLED !== "false") await recordRun("sources.schedule",scheduleDueSources);
   await recordRun("content.sweep",sweepUnprocessed);
   // Queue priorities only apply within one queue. Register model-consuming event handlers
   // after new material is processed, so event digests do not take its remaining allowance.
-  const articlesDrained = await drain(ARTICLE_QUEUES);
+  const articlesDrained = await drain(ARTICLE_QUEUES, true);
   await recordRun("events.recover", async () => ({
     legacy: await importLegacyEventDeferrals(),
     deferred: articlesDrained && Date.now() < deadline - 240_000
@@ -75,8 +88,15 @@ try {
       : {waiting:true,reason:"priority-work"},
   }));
   if (articlesDrained && Date.now() < deadline - 240_000) {
-    await registerEventJobs(boss);
-    await drain([...ARTICLE_QUEUES,...EVENT_QUEUES]);
+    // Stop claiming historical analyses, while allowing every paid request already in flight to settle.
+    await boss.offWork(QUEUES.analyze, { wait: true });
+    if (Date.now() < deadline - 240_000 && await pendingRecentPriorityWork(ARTICLE_QUEUES) === 0) {
+      await registerEventJobs(boss);
+      await drainEvents();
+      await Promise.all(EVENT_QUEUES.map(name => boss.offWork(name, { wait: true })));
+    }
+    await registerContentJobs(boss);
+    if (Date.now() < deadline - 240_000 && await pendingRecentPriorityWork(ARTICLE_QUEUES)) await drain(ARTICLE_QUEUES, true);
   }
   if (Date.now() < deadline - 240_000) {
     await recordRun("hot.rank",computeHotRanking);
@@ -84,7 +104,7 @@ try {
     await recordRun("stories.status",refreshStoryStatuses);
     await recordRun("stories.links",linkRelatedStories);
     if (process.env.MODEL_CALLS_ENABLED === "true") await recordRun("reports.catch-up", async () =>
-      await pendingPriorityWork([...ARTICLE_QUEUES,...EVENT_QUEUES])
+      await pendingRecentPriorityWork([...ARTICLE_QUEUES,...EVENT_QUEUES])
         ? {waiting:true,reason:"priority-work"}
         : runWithBudgetWaiting(()=>catchUpReports()));
   }

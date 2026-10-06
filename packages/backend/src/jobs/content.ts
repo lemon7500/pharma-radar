@@ -108,6 +108,10 @@ export async function processArticle(articleId: string, opts: { attemptTag?: str
   }
   try {
     if (process.env.COLLECT_ENABLED === "true") await enrichResearchMaterial(articleId).catch(() => {});
+    // Metadata enrichment and DOI reconciliation are free; checked indexes can
+    // be read even if the following model request must wait for budget.
+    for (const alias of await reconcileResearchDoi(articleId)) await publishArticle(alias);
+    await publishArticle(articleId);
     const result = await analyzeArticle(articleId, { attemptTag: opts.attemptTag });
     if (!result) return { state: "missing" };
     // Only a title or a feed summary: the article page first; extraction queues the analysis again.

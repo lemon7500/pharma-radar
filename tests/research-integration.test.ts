@@ -59,7 +59,9 @@ test('share images and exported reading notes hide unverified legacy claims and 
  assert.ok(!note.body.includes('quote'));
  const share=await loadItemShare(id);assert.equal(share!.summary,'活性降低25%。');assert.equal(share!.researchKicker,'原始研究');
  await sql`UPDATE articles SET body_text='References: 10.1234/a 10.1234/b 10.1234/c',revision=revision+1 WHERE id=${id}`;
- await sql`UPDATE analyses SET summary_zh='未经证实的临床疗效',category='clinical',tags=ARRAY['临床试验','药理机制'] WHERE article_id=${id}`;
+ // This checks filtering a current analysis against insufficient material.
+ // Earlier-revision analysis suppression is covered by preliminary-publication.
+ await sql`UPDATE analyses SET input_revision=(SELECT revision FROM articles WHERE id=${id}),summary_zh='未经证实的临床疗效',category='clinical',tags=ARRAY['临床试验','药理机制'] WHERE article_id=${id}`;
  await publishArticle(id);
  const pendingShare=await loadItemShare(id);assert.match(pendingShare!.summary!,/待确认/);assert.ok(!pendingShare!.summary!.includes('临床疗效'));assert.equal(pendingShare!.researchKicker,'原始研究');
  const detail=await loadItemDetail(id);assert.equal(detail.kind,'found');if(detail.kind==='found'){assert.ok(!detail.detail.tags.includes('临床试验'));assert.ok(detail.detail.tags.includes('药理机制'));assert.equal(detail.detail.category,'clinical');}
@@ -68,6 +70,7 @@ test('share images and exported reading notes hide unverified legacy claims and 
  const clinicalBody=quote+' Our study compared the trial groups using prespecified clinical endpoints and reported the trial design.';
  const supported=validateResearchExtraction({evidenceStages:[{value:'clinical',quote}],clinicalPhase:{value:'II',quote},claims:{question:{text:'开展随机II期临床试验。',quote}}},{title:'Clinical trial',bodyText:clinicalBody,bibliography:bib});
  await sql`UPDATE articles SET body_text=${clinicalBody},revision=revision+1,research_profile=${sql.json(supported.profile as never)},research_support=${sql.json(supported.support)},research_revision=revision+1 WHERE id=${id}`;
+ await sql`UPDATE analyses SET input_revision=(SELECT revision FROM articles WHERE id=${id}) WHERE article_id=${id}`;
  await publishArticle(id);const verified=await loadItemDetail(id);assert.equal(verified.kind,'found');if(verified.kind==='found'){assert.ok(verified.detail.tags.includes('临床试验'));assert.equal(verified.detail.research?.clinicalPhase,'II');}
 });
 test('admin rejects unsupported research, audits verified corrections and preserves them on republish',async()=>{

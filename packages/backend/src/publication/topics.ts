@@ -144,5 +144,5 @@ export async function loadTopicPage(slug: string, page: number, now = new Date()
     SELECT ${ITEM_COLUMNS} ${ITEM_FROM} WHERE p.article_id IN (SELECT article_id FROM page)
     ORDER BY p.timeline_at DESC, p.article_id DESC`;
   const related = row.related.map((r) => topics.find((t) => t.slug === r)).filter((t): t is TopicSummary => !!t).map((t) => ({ slug: t.slug, name: t.name }));
-  return { topic: { ...topic, related }, items: rows.map(toFeedItemSummary), page, pageCount };
+  return { topic: { ...topic, related }, items: rows.map(row => toFeedItemSummary(row, now)), page, pageCount };
 }

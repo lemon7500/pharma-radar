@@ -9,6 +9,7 @@ import type { ResearchProfile } from "@aihot/contracts/research";
 import { publicationTime } from "@aihot/contracts/publication-time";
 
 export interface ItemRow {
+  index_only?: boolean;
   additional_source_count?: number;
   research?: ResearchProfile | null;
   id: string;
@@ -57,7 +58,7 @@ export interface ItemRow {
 /** Columns every item listing selects. Internal judgement details never leave this layer. */
 export const ITEM_COLUMNS = sql`
   (SELECT count(DISTINCT d.source_id)::int FROM article_discoveries d JOIN sources ds ON ds.id=d.source_id WHERE d.article_id=p.article_id AND d.source_id <> p.source_id AND ds.participation_mode='editorial') AS additional_source_count,
-  p.research,
+  p.research, p.index_only,
   p.article_id AS id, p.revision, p.title, p.original_title, p.summary, p.reason, p.category, p.tags, p.score,
   p.selected, p.eligible, p.channel, p.url, p.published_at, p.discovered_at, p.timeline_at, p.sort_at, p.first_party, p.visibility,
   p.body_mode, p.syndicate, p.indexable, p.visible_after, p.backfill, p.fact_id, p.story_id,
@@ -84,7 +85,9 @@ export const ITEM_FROM = sql`
 
 /** Listed items: public, and a selected item only after its release gate. */
 export function listedCondition(now: Date) {
-  return sql`p.visibility = 'public' AND (NOT p.selected OR p.visible_after <= ${now})`;
+  // Promoting an already-public index does not remove it from the library while
+  // its new selected release waits for grouping. Selected-only exits keep their gate.
+  return sql`p.visibility = 'public' AND (NOT p.selected OR p.visible_after <= ${now} OR p.first_public_at <= ${now})`;
 }
 
 /** Selected set as shown on the home timeline, v1 selected mode and RSS. */
@@ -160,6 +163,7 @@ export function toItemSummary(row: ItemRow): ItemSummary {
   const x = row.channel === "x" ? xView(row, true) : null;
   return {
     id: row.id,
+    contentStage: row.index_only ? "index" : "processed",
     additionalSourceCount: Number(row.additional_source_count ?? 0),
     revision: row.revision,
     title: row.title,
@@ -191,14 +195,15 @@ export function toItemSummary(row: ItemRow): ItemSummary {
 }
 
 /** Project the shared public article into the exact fields a site card renders. */
-export function toFeedItemSummary(row: ItemRow): FeedItemSummary {
+export function toFeedItemSummary(row: ItemRow, now = new Date()): FeedItemSummary {
   const item = toItemSummary(row);
+  const selected = item.selected && !!row.visible_after && row.visible_after <= now;
   return {
-    id: item.id, title: item.title, summary: item.summary, reason: item.reason,
+    id: item.id, title: item.title, originalTitle: item.originalTitle, links: item.links, contentStage: item.contentStage, summary: item.summary, reason: selected ? item.reason : null,
     source: { name: item.source.name, id: item.source.id, iconUrl: item.source.iconUrl, iconSrcSet: item.source.iconSrcSet }, publishedAt: item.publishedAt, timelineAt: item.timelineAt,
     publicationTime: item.publicationTime, discoveredAt: item.discoveredAt,
     additionalSourceCount: item.additionalSourceCount, story:item.story,
-    category: item.category, tags: item.tags, score: item.score, selected: item.selected, channel: item.channel,
+    category: item.category, tags: item.tags, score: item.score, selected, channel: item.channel,
     research: item.research ?? null,
     x: item.x ? {
       authorName: item.x.authorName, handle: item.x.handle, avatarUrl: item.x.avatarUrl,

@@ -5,7 +5,7 @@ import { credential } from "@aihot/backend/config";
 import { ensureQueue, recordRun } from "@aihot/backend/jobs/queue";
 import { sweepUnprocessed } from "@aihot/backend/jobs/content";
 import { importLegacyEventDeferrals, recoverDeferredEventJobs } from "@aihot/backend/jobs/event-deferrals";
-import { ARTICLE_QUEUES, EVENT_QUEUES, pendingPriorityWork, runWithBudgetWaiting } from "@aihot/backend/jobs/priority";
+import { ARTICLE_QUEUES, EVENT_QUEUES, pendingRecentPriorityWork, runWithBudgetWaiting } from "@aihot/backend/jobs/priority";
 import { translatePending } from "@aihot/backend/editorial/translate";
 import { adaptIntervals, scheduleDueSources } from "@aihot/backend/sources/collect";
 import { scheduleMpReconcile } from "@aihot/backend/sources/mp";
@@ -38,7 +38,7 @@ interface Scheduled {
 const collecting = process.env.COLLECT_ENABLED !== "false";
 
 async function runReport(run: () => Promise<unknown>) {
-  if (await pendingPriorityWork([...ARTICLE_QUEUES, ...EVENT_QUEUES])) return { waiting: true, reason: "priority-work" };
+  if (await pendingRecentPriorityWork([...ARTICLE_QUEUES, ...EVENT_QUEUES])) return { waiting: true, reason: "priority-work" };
   return runWithBudgetWaiting(run);
 }
 
@@ -76,7 +76,7 @@ export const SCHEDULES: Scheduled[] = [
       released: await autoReleaseUnknownReceipts(),
       deliveries: await markStaleDeliveries(),
       legacy: await importLegacyEventDeferrals(),
-      deferred: await pendingPriorityWork(ARTICLE_QUEUES)
+      deferred: await pendingRecentPriorityWork(ARTICLE_QUEUES)
         ? { waiting: true, reason: "priority-work" }
         : await recoverDeferredEventJobs(),
     }),

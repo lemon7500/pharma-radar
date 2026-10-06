@@ -4,6 +4,7 @@ import { sql } from "../db.ts";
 import { identityKeyFor, upsertMaterial } from "../content/materials.ts";
 import { enqueue, QUEUES } from "../jobs/queue.ts";
 import { queueProcessing } from "../jobs/content.ts";
+import { publishArticle } from "../publication/publish.ts";
 import { BudgetExceededError } from "../providers/receipts.ts";
 import { fetchRss } from "./rss.ts";
 import { allowed, fetchDetail, fetchWebList, type DetailNeed } from "./web-list.ts";
@@ -78,7 +79,12 @@ async function store(sourceId: string, candidates: Candidate[], backfill: string
     if (res.created) created += 1;
     if (res.revised) revised += 1;
     // Extraction first when the source wants full text and none came with the listing, else analysis.
-    if (res.created || res.revised) await queueProcessing(res.articleId);
+    if (res.created || res.revised) {
+      // Free projection first: verified bibliographic indexes do not wait for a
+      // paid analysis request. Other sources retain their existing admission gate.
+      await publishArticle(res.articleId);
+      await queueProcessing(res.articleId);
+    }
   }
   return { created, revised };
 }

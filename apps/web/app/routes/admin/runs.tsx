@@ -10,8 +10,16 @@ import { AdminPage, Badge, Button, Card, DataTable, Dot, Empty, Field, Json, Rea
 
 type Row = Record<string, any>;
 interface Runs {
+  publicationLatency:{
+    waiting:{count:number;recentCount:number;historicalOrUnknownCount:number;oldestDiscoveredAt:string|null;oldestWaitMinutes:number|null};
+    firstPublic:{sampleCount:number;p50Minutes:number|null;p95Minutes:number|null};
+    indexOnly:{count:number;recentCount:number;historicalOrUnknownCount:number;oldestFirstPublicAt:string|null;oldestAgeMinutes:number|null;untrackedCount:number};
+  };
   deferredEvents:Array<{queue:string;reason:string;service:string|null;n:number;next:string;oldest:string}>;
-  modelBudget:{available:boolean;blockedWindow:string|null;retryAt:string|null;remaining:{minute:number;hour:number;day:number}|null};
+  modelBudget:{available:boolean;blockedWindow:string|null;retryAt:string|null;remaining:{minute:number;hour:number;day:number}|null;
+    blockedReason?:'budget'|'background-reserve'|null;
+    reserve?:{reserved:{minute:number;hour:number;day:number};backgroundCaps:{minute:number;hour:number;day:number};remainingBackground:{minute:number;hour:number;day:number};blockedWindow:'hour'|'day'|null;retryAt:string|null;recentHours:number};
+  };
   research:{rejected:number;rejectedFields:Array<{reason:string;count:number}>;processingVersion:string;total:number;ready:number;insufficient:number;waiting:number;retrying:number;attempted:number;database_bytes:string;requests:number;cost:string|null;paused:boolean;pauseReason:string|null};
   checkedAt: string;
   processes: Array<{ role: string; pid: number; host: string; release: string; startedAt: string; at: string; alive: boolean; mode?:string; status?:string }>;
@@ -78,6 +86,25 @@ export default function RunsAdmin({ loaderData }: Route.ComponentProps) {
         <Stat label="投递待核实" value={num(r.deliveries.filter((d) => d.status === "unknown").length)} tone={r.deliveries.some((d) => d.status === "unknown") ? "bad" : "ok"} />
       </div>
 
+      <div className="mb-5"><Card title="收录时效">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <Stat label="等待检查或整理" value={num(r.publicationLatency.waiting.count)}
+            hint={`近期发表 ${num(r.publicationLatency.waiting.recentCount)} · 历史或日期未知 ${num(r.publicationLatency.waiting.historicalOrUnknownCount)}`} />
+          <Stat label="最老等待" value={r.publicationLatency.waiting.oldestWaitMinutes===null?'—':`${num(r.publicationLatency.waiting.oldestWaitMinutes,1)} 分钟`}
+            hint={r.publicationLatency.waiting.oldestDiscoveredAt?`发现于 ${bj(r.publicationLatency.waiting.oldestDiscoveredAt,true)}`:'没有等待资料'} />
+          <Stat label="首次公开中位耗时" value={r.publicationLatency.firstPublic.p50Minutes===null?'—':`${num(r.publicationLatency.firstPublic.p50Minutes,1)} 分钟`}
+            hint={`最近 7 天新增可追踪记录 ${num(r.publicationLatency.firstPublic.sampleCount)} 条`} />
+          <Stat label="首次公开 P95 耗时" value={r.publicationLatency.firstPublic.p95Minutes===null?'—':`${num(r.publicationLatency.firstPublic.p95Minutes,1)} 分钟`}
+            hint="发现到首次公开，95% 样本不超过此值" />
+        </div>
+        <div className="mt-4 grid gap-3 border-t border-line pt-4 text-[13px] sm:grid-cols-2">
+          <p>已公开待导读 <strong>{num(r.publicationLatency.indexOnly.count)}</strong> 条 <span className="text-ink-3">· 近期发表 {num(r.publicationLatency.indexOnly.recentCount)} · 历史或日期未知 {num(r.publicationLatency.indexOnly.historicalOrUnknownCount)}</span></p>
+          <p>最老已公开待整理 <strong>{r.publicationLatency.indexOnly.oldestAgeMinutes===null?'—':`${num(r.publicationLatency.indexOnly.oldestAgeMinutes,1)} 分钟`}</strong>
+            {r.publicationLatency.indexOnly.untrackedCount>0 && <span className="text-ink-3"> · {num(r.publicationLatency.indexOnly.untrackedCount)} 条旧稿未记录首次公开时间</span>}</p>
+        </div>
+        <p className="mt-4 text-[12px] leading-6 text-ink-3">等待资料尚需基本检查或整理，并不代表它们应当公开。近期发表指来源日期在过去 48 小时内，其余归为历史或日期未知。耗时仅从站内发现算到真实首次公开，样本仅含新增可追踪的公开记录；只有日期的发表记录不计算小时延迟，旧稿缺少首次公开记录时不补造时间。</p>
+      </Card></div>
+
       <ReasonDialog open={researchPause} title={r.research.paused?'恢复渐进回填':'暂停渐进回填'} description="只改变旧稿研究整理的运行状态，正常采集与阅读继续运行；恢复后仍遵守每日 20 篇上限。" confirmLabel="应用" busy={pending==='research-pause'} onClose={()=>setResearchPause(false)} onSubmit={async reason=>(await run('POST','/api/admin/research/backfill',{paused:!r.research.paused,reason},{label:'research-pause',success:'回填状态已更新'}))!==null} />
       <div className="mb-5"><Card title="研究整理与资源用量" right={<Button size="sm" onClick={()=>setResearchPause(true)}>{r.research.paused?'恢复渐进回填':'暂停渐进回填'}</Button>}>
         {r.research.paused && <p className="mb-4 text-[13px] text-hot">已暂停：{r.research.pauseReason || '管理员暂停'}</p>}
@@ -85,7 +112,12 @@ export default function RunsAdmin({ loaderData }: Route.ComponentProps) {
       </Card></div>
       <div className="mb-5"><Card title="等待额度与回执的事件任务">
         <p className="mb-4 text-[13px] text-ink-3">新资料先处理，之后恢复事件摘要、简报和旧稿。额度按滚动时间窗口释放；这里的等待不计为模型失败，也不会提高调用上限。</p>
-        {r.modelBudget.remaining && <p className="mb-4 text-[13px]">默认模型剩余请求：每分钟 {r.modelBudget.remaining.minute} · 每小时 {r.modelBudget.remaining.hour} · 24 小时 {r.modelBudget.remaining.day}{!r.modelBudget.available && <> · {r.modelBudget.blockedWindow==='stopped'?'已停止调用':<>预计可恢复 <Time at={r.modelBudget.retryAt} /></>}</>}</p>}
+        {r.modelBudget.remaining && <p className="mb-4 text-[13px]">默认模型总剩余请求：每分钟 {r.modelBudget.remaining.minute} · 每小时 {r.modelBudget.remaining.hour} · 24 小时 {r.modelBudget.remaining.day}{!r.modelBudget.available && <> · {r.modelBudget.blockedWindow==='stopped'?'已停止调用':<>{r.modelBudget.blockedReason==='background-reserve'?'事件与旧稿等待预留额度释放，预计':'预计可恢复'} <Time at={r.modelBudget.retryAt} /></>}</>}</p>}
+        {r.modelBudget.reserve && <div className="mb-4 rounded-lg border border-line p-3 text-[13px] leading-6">
+          <p>近 {r.modelBudget.reserve.recentHours} 小时新资料预留：每小时 <strong>{num(r.modelBudget.reserve.reserved.hour)}</strong> · 24 小时 <strong>{num(r.modelBudget.reserve.reserved.day)}</strong> 次请求。</p>
+          <p>事件与旧稿当前可用：每分钟 <strong>{num(r.modelBudget.reserve.remainingBackground.minute)}</strong> · 每小时 <strong>{num(r.modelBudget.reserve.remainingBackground.hour)}</strong> · 24 小时 <strong>{num(r.modelBudget.reserve.remainingBackground.day)}</strong> 次请求。</p>
+          <p className="text-[12px] text-ink-3">预留包含在总额度内，不增加调用上限；已收到的结果可继续复用。</p>
+        </div>}
         <DataTable dense rows={r.deferredEvents} rowKey={d=>`${d.queue}-${d.reason}-${d.service}`} empty="没有等待恢复的事件任务" columns={[
           {key:'queue',label:'任务',render:d=>d.queue==='events.digest'?'事件摘要':'资料归组'},
           {key:'reason',label:'等待原因',render:d=><Badge tone="warn">{d.reason==='budget'?'等待额度':'等待已有请求完成'}</Badge>},

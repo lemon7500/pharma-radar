@@ -8,14 +8,25 @@
 //    most one repeat; after that it waits for the admin.
 import { sql, type Db } from "../db.ts";
 import { sha256, stableJson } from "../lib/ids.ts";
+import { classifyRequestWorkload, readRequestReserve, readServiceBudget, type WorkloadClass } from "./budget.ts";
 
 export class BudgetExceededError extends Error {
   readonly service: string;
   readonly retryAfterSeconds: number;
-  constructor(service: string, window: string, retryAfterSeconds: number) {
+  readonly retryAt?: Date;
+  constructor(service: string, window: string, retryAfterSeconds: number, retryAt?: Date) {
     super(`Budget for ${service} exhausted (${window})`);
     this.service = service;
     this.retryAfterSeconds = retryAfterSeconds;
+    this.retryAt = retryAt;
+  }
+}
+
+/** Expected waiting: background work cannot spend the allowance reserved for recent publication processing. */
+export class BackgroundReserveExceededError extends BudgetExceededError {
+  constructor(service: string, window: "hour" | "day", retryAfterSeconds: number, retryAt: Date | null) {
+    super(service, `background-reserve:${window}`, retryAfterSeconds, retryAt ?? undefined);
+    this.name = "BackgroundReserveExceededError";
   }
 }
 
@@ -81,25 +92,16 @@ interface ReceiptRow {
   updated_at: Date;
 }
 
-async function checkBudget(tx: Db, service: string): Promise<void> {
-  const [budget] = await tx<{ per_minute: number; per_hour: number; per_day: number }[]>`
-    SELECT per_minute, per_hour, per_day FROM budgets WHERE service = ${service}`;
-  if (!budget) return; // default rows come with the migrations; a service an operator removed is unlimited
-  // Every request sent counts, retries of the same logical request included.
-  const [counts] = await tx<{ minute: number; hour: number; day: number }[]>`
-    SELECT
-      count(*) FILTER (WHERE started_at > now() - interval '1 minute') AS minute,
-      count(*) FILTER (WHERE started_at > now() - interval '1 hour') AS hour,
-      count(*) AS day
-    FROM receipt_attempts
-    WHERE service = ${service} AND origin = 'live' AND started_at > now() - interval '1 day'`;
-  const c = counts!;
-  if (budget.per_minute <= 0 || budget.per_hour <= 0 || budget.per_day <= 0) {
-    throw new BudgetExceededError(service, "stopped", 3600);
+async function checkBudget(tx: Db, req: ReceiptRequest): Promise<{ workload: WorkloadClass; tracking: boolean }> {
+  const policy = await readRequestReserve(tx);
+  const workload = policy.tracking ? await classifyRequestWorkload(req, tx) : "background";
+  const budget = await readServiceBudget(req.service, tx, workload, policy);
+  if (!budget.available) {
+    const seconds = budget.retryAt ? Math.max(1, Math.ceil((budget.retryAt.getTime() - Date.now()) / 1000)) : 3600;
+    if (budget.blockedReason === "background-reserve") throw new BackgroundReserveExceededError(req.service, budget.blockedWindow as "hour" | "day", seconds, budget.retryAt);
+    throw new BudgetExceededError(req.service, budget.blockedWindow ?? "stopped", seconds, budget.retryAt ?? undefined);
   }
-  if (c.minute >= budget.per_minute) throw new BudgetExceededError(service, "minute", 60);
-  if (c.hour >= budget.per_hour) throw new BudgetExceededError(service, "hour", 600);
-  if (c.day >= budget.per_day) throw new BudgetExceededError(service, "day", 3600);
+  return { workload, tracking: policy.tracking };
 }
 
 /**
@@ -123,19 +125,19 @@ export async function paidRequest(req: ReceiptRequest, call: () => Promise<CallO
       }
       if (existing.status === "unknown") return { kind: "unknown" as const, row: existing };
       // failed: the provider did not take the request, or its answer was unusable; a new attempt is allowed.
-      await checkBudget(tx, req.service);
+      const admitted = await checkBudget(tx, req);
       const [r] = await tx<{ attempts: number }[]>`
         UPDATE receipts SET status = 'pending', attempts = attempts + 1, error = NULL, updated_at = now() WHERE id = ${existing.id} RETURNING attempts`;
-      const attemptId = await startAttempt(tx, existing.id, r!.attempts, req);
+      const attemptId = await startAttempt(tx, existing.id, r!.attempts, req, admitted);
       return { kind: "call" as const, id: existing.id, attemptId };
     }
-    await checkBudget(tx, req.service);
+    const admitted = await checkBudget(tx, req);
     const [row] = await tx<{ id: number }[]>`
       INSERT INTO receipts (logical_key, service, model, purpose, subject, status, request, attempts)
       VALUES (${logicalKey}, ${req.service}, ${req.model ?? null}, ${req.purpose}, ${req.subject ?? null}, 'pending',
               ${tx.json((req.requestSummary ?? {}) as never)}, 1)
       RETURNING id`;
-    const attemptId = await startAttempt(tx, row!.id, 1, req);
+    const attemptId = await startAttempt(tx, row!.id, 1, req, admitted);
     return { kind: "call" as const, id: row!.id, attemptId };
   });
 
@@ -184,7 +186,12 @@ export async function paidRequest(req: ReceiptRequest, call: () => Promise<CallO
   return { receiptId, response: outcome.response, reused: false };
 }
 
-async function startAttempt(tx: Db, receiptId: number, attempt: number, req: ReceiptRequest): Promise<number> {
+async function startAttempt(tx: Db, receiptId: number, attempt: number, req: ReceiptRequest, admitted: { workload: WorkloadClass; tracking: boolean }): Promise<number> {
+  if (admitted.tracking) {
+    const [row] = await tx<{ id: number }[]>`
+      INSERT INTO receipt_attempts (receipt_id, attempt, service, model, status, workload_class) VALUES (${receiptId}, ${attempt}, ${req.service}, ${req.model ?? null}, 'pending', ${admitted.workload}) RETURNING id`;
+    return row!.id;
+  }
   const [row] = await tx<{ id: number }[]>`
     INSERT INTO receipt_attempts (receipt_id, attempt, service, model, status) VALUES (${receiptId}, ${attempt}, ${req.service}, ${req.model ?? null}, 'pending')
     RETURNING id`;

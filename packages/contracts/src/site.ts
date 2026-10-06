@@ -48,6 +48,8 @@ export interface ItemSummary {
   additionalSourceCount?: number;
   publicationTime?: PublicationTime;
   research?: ResearchProfile | null;
+  /** Missing on older items; index records contain bibliographic information while the reading note is pending. */
+  contentStage?: "index" | "processed";
   id: string;
   revision: number;
   title: string;
@@ -68,8 +70,12 @@ export interface ItemSummary {
   x: XPostView | null;
 }
 
+export const INDEX_CONTENT_SUMMARY = "文献信息已收录，研究导读整理中。请先阅读来源原文。";
+
 /** The fields rendered by a site feed card; full original text lives in the item detail. */
-export interface FeedItemSummary extends Pick<ItemSummary, "id" | "title" | "summary" | "reason" | "publishedAt" | "timelineAt" | "category" | "tags" | "score" | "selected" | "channel" | "research"> {
+export interface FeedItemSummary extends Pick<ItemSummary, "id" | "title" | "summary" | "reason" | "publishedAt" | "timelineAt" | "category" | "tags" | "score" | "selected" | "channel" | "research" | "contentStage"> {
+  originalTitle?: string | null;
+  links?: ItemSummary["links"];
   additionalSourceCount?: number;
   story?: StoryRef | null;
   publicationTime?: PublicationTime;

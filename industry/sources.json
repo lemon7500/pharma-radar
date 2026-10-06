@@ -18,7 +18,8 @@
         "feedUrl": "https://www.nature.com/nrd.rss",
         "_aihot": {
           "initialBackfillLimit": 3
-        }
+        },
+        "preliminaryIndex": true
       }
     },
     {
@@ -39,7 +40,8 @@
         "feedUrl": "https://www.nature.com/aps.rss",
         "_aihot": {
           "initialBackfillLimit": 3
-        }
+        },
+        "preliminaryIndex": true
       }
     },
     {
@@ -74,7 +76,8 @@
         "externalIdPath": "id",
         "_aihot": {
           "initialBackfillLimit": 3
-        }
+        },
+        "preliminaryIndex": true
       }
     },
     {
@@ -108,7 +111,8 @@
         "externalIdPath": "id",
         "_aihot": {
           "initialBackfillLimit": 3
-        }
+        },
+        "preliminaryIndex": true
       }
     },
     {
@@ -143,7 +147,8 @@
         "externalIdPath": "id",
         "_aihot": {
           "initialBackfillLimit": 3
-        }
+        },
+        "preliminaryIndex": true
       }
     }
   ]
