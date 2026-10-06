@@ -30,6 +30,7 @@ interface Route {
   /** Not an editorial source: no analysis; the post goes straight to event grouping as discussion evidence. */
   signal: boolean;
   historical: boolean;
+  recent: boolean;
 }
 
 /**
@@ -39,9 +40,10 @@ interface Route {
  * history adds no heat).
  */
 async function route(articleId: string, db: Db): Promise<Route | null> {
-  const [row] = await db<{ body_status: string; participation_mode: string; kind: string; config: Record<string, unknown>; url: string; bare: boolean; backfill: boolean; published_at: Date | null; discovered_at: Date }[]>`
+  const [row] = await db<{ body_status: string; participation_mode: string; kind: string; config: Record<string, unknown>; url: string; bare: boolean; backfill: boolean; published_at: Date | null; discovered_at: Date; recent: boolean }[]>`
     SELECT a.body_status, s.participation_mode, s.kind, s.config, a.url, (coalesce(a.body_text, '') = '' AND a.x_post IS NULL) AS bare,
-           a.backfill, a.published_at, a.discovered_at
+           a.backfill, a.published_at, a.discovered_at,
+           coalesce(s.participation_mode = 'editorial' AND a.published_at >= now() - interval '48 hours' AND a.published_at <= now(), false) AS recent
     FROM articles a JOIN sources s ON s.id = a.source_id WHERE a.id = ${articleId}`;
   if (!row) return null;
   const historical = isHistorical(row);
@@ -50,15 +52,15 @@ async function route(articleId: string, db: Db): Promise<Route | null> {
   const wantsBody = row.config.fetchPublicContent === true || !!row.config.detail || row.kind === "web_list";
   const needsPage = !signal && (wantsBody || (row.bare && pageFetchable(row.url, row.kind)));
   const needsXArticle = row.kind === "x_search" && (!signal || (row.participation_mode === "hot_signal" && !historical));
-  return { step: pending && (needsPage || needsXArticle) ? "extract" : "analyze", signal, historical };
+  return { step: pending && (needsPage || needsXArticle) ? "extract" : "analyze", signal, historical, recent: row.recent };
 }
 
 /**
- * Queue order (pg-boss serves higher priority first): live work before history, so a new source's
- * first import or a backfill never holds up today's news; discussion evidence waits behind reports
+ * Queue order (pg-boss serves higher priority first): automatic recent publications before other
+ * live work, then history; discussion evidence waits behind reports
  * in the serial grouping queue, history behind both.
  */
-const PRIORITY = { live: 0, liveSignal: -1, history: -2 } as const;
+const PRIORITY = { recent: 2, live: 0, liveSignal: -1, history: -2 } as const;
 
 /**
  * The one way to hand an article to processing. `attemptTag` makes an explicit re-evaluation a new
@@ -70,14 +72,16 @@ export async function queueProcessing(articleId: string, opts: { step?: Step; at
   const r = await route(articleId, db);
   if (!r) return null;
   const step = opts.step ?? r.step;
+  const tagged = !!opts.attemptTag;
+  const priority = !tagged && r.recent ? PRIORITY.recent : r.historical ? PRIORITY.history : PRIORITY.live;
   await db`UPDATE articles SET processing_queued_at = now() WHERE id = ${articleId}`;
-  if (step === "extract") return enqueue(QUEUES.extractBody, { articleId }, { singletonKey: articleId, priority: r.historical ? PRIORITY.history : PRIORITY.live }, opts.db);
+  if (step === "extract") return enqueue(QUEUES.extractBody, tagged ? { articleId, attemptTag: opts.attemptTag } : { articleId },
+    { singletonKey: tagged ? `manual:extract:${articleId}:${opts.attemptTag}` : articleId, priority }, opts.db);
   if (r.signal && !opts.attemptTag) {
     return enqueue(QUEUES.group, { articleId, signalOnly: true }, { singletonKey: articleId, priority: r.historical ? PRIORITY.history : PRIORITY.liveSignal }, opts.db);
   }
-  const tagged = !!opts.attemptTag;
   return enqueue(QUEUES.analyze, tagged ? { articleId, attemptTag: opts.attemptTag } : { articleId },
-    { singletonKey: tagged ? `manual:analyze:${articleId}:${opts.attemptTag}` : articleId, priority: r.historical ? PRIORITY.history : PRIORITY.live }, opts.db);
+    { singletonKey: tagged ? `manual:analyze:${articleId}:${opts.attemptTag}` : articleId, priority }, opts.db);
 }
 
 /**
@@ -116,7 +120,7 @@ export async function processArticle(articleId: string, opts: { attemptTag?: str
     if (!result) return { state: "missing" };
     // Only a title or a feed summary: the article page first; extraction queues the analysis again.
     if (result.needsBody || !result.output) {
-      await queueProcessing(articleId, { step: "extract" });
+      await queueProcessing(articleId, { step: "extract", attemptTag: opts.attemptTag });
       return { state: "fetching-body" };
     }
     if (result.stale) return { state: "stale" }; // the newer revision has its own job
@@ -187,12 +191,12 @@ export async function registerContentJobs(boss: PgBoss, concurrency = Number(pro
  */
 export async function registerExtractionJobs(boss: PgBoss) {
   await ensureQueue(QUEUES.extractBody);
-  await boss.work<{ articleId: string }>(QUEUES.extractBody, { localConcurrency: 4, pollingIntervalSeconds: 2 }, async ([job]) => {
+  await boss.work<{ articleId: string; attemptTag?: string }>(QUEUES.extractBody, { localConcurrency: 4, pollingIntervalSeconds: 2 }, async ([job]) => {
     if (!job) return;
-    const { articleId } = job.data;
+    const { articleId, attemptTag } = job.data;
     try {
       const state = await extractArticleBody(articleId);
-      await queueProcessing(articleId, { step: "analyze" });
+      await queueProcessing(articleId, { step: "analyze", attemptTag });
       return { state };
     } catch (error) {
       const message = String(error instanceof Error ? error.message : error).slice(0, 500);
@@ -202,10 +206,29 @@ export async function registerExtractionJobs(boss: PgBoss) {
         WHERE id = ${articleId} RETURNING processing_attempts`;
       if ((a?.processing_attempts ?? MAX_EXTRACT_FAILURES) < MAX_EXTRACT_FAILURES) return { state: "retrying" };
       await sql`UPDATE articles SET body_status = 'unconfirmed', processing_attempts = 0, processing_retry_at = NULL WHERE id = ${articleId} AND body_status = 'pending'`;
-      await queueProcessing(articleId, { step: "analyze" });
+      await queueProcessing(articleId, { step: "analyze", attemptTag });
       return { state: "unconfirmed" };
     }
   });
+}
+
+/** Refresh waiting jobs as papers age; never change a running or explicit manual job. */
+export async function refreshProcessingPriorities(db: Db = sql): Promise<number> {
+  const updated = await db`
+    WITH waiting AS (
+      SELECT j.id, j.name, CASE
+        WHEN s.participation_mode = 'editorial' AND a.published_at >= now() - interval '48 hours' AND a.published_at <= now() THEN ${PRIORITY.recent}::int
+        WHEN a.backfill AND (a.published_at IS NULL OR a.discovered_at - a.published_at > interval '48 hours') THEN ${PRIORITY.history}::int
+        ELSE ${PRIORITY.live}::int END AS priority
+      FROM pgboss.job j JOIN articles a ON a.id = j.data->>'articleId' JOIN sources s ON s.id = a.source_id
+      WHERE j.name IN (${QUEUES.analyze}, ${QUEUES.extractBody}) AND j.state IN ('created', 'retry')
+        AND NOT (j.data ? 'attemptTag')
+      FOR UPDATE OF j SKIP LOCKED
+    )
+    UPDATE pgboss.job j SET priority = waiting.priority FROM waiting
+    WHERE j.id = waiting.id AND j.name = waiting.name AND j.state IN ('created', 'retry')
+      AND j.priority IS DISTINCT FROM waiting.priority RETURNING j.id`;
+  return updated.length;
 }
 
 /**
@@ -213,6 +236,7 @@ export async function registerExtractionJobs(boss: PgBoss) {
  * a lost job, a retry that came due). Articles already queued or running are left alone.
  */
 export async function sweepUnprocessed(): Promise<{ enqueued: number }> {
+  await refreshProcessingPriorities();
   const rows = await sql<{ id: string }[]>`
     SELECT id FROM articles
     WHERE processing_state = 'new' AND (created_at < now() - interval '3 minutes' OR processing_retry_at IS NOT NULL)
