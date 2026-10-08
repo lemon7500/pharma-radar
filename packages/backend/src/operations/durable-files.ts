@@ -15,8 +15,15 @@ function store() {
   const bucket = process.env.SUPABASE_UPLOADS_BUCKET;
   if (!url && !key && !bucket) return null;
   if (!url || !key || !bucket) throw new Error("Incomplete Supabase uploads configuration");
-  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } }).storage.from(bucket);
+  return createClient(url, key, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { fetch: (input, init) => fetch(input, { ...init, signal: init?.signal
+      ? AbortSignal.any([init.signal, AbortSignal.timeout(20_000)]) : AbortSignal.timeout(20_000) }) },
+  }).storage.from(bucket);
 }
+
+/** Remember this on a receipt so a later missing configuration cannot pretend a remote deletion succeeded. */
+export function durableStorageConfigured(): boolean { return store() !== null; }
 
 export async function putDurableFile(key: string, data: Buffer, contentType: string): Promise<void> {
   const file = filePath(key);
@@ -44,9 +51,10 @@ export async function restoreDurableFile(key: string): Promise<boolean> {
   return true;
 }
 
-export async function removeDurableFile(key: string): Promise<void> {
+export async function removeDurableFile(key: string, options: { requireRemote?: boolean } = {}): Promise<void> {
   const file = filePath(key);
   const remote = store();
+  if (options.requireRemote && !remote) throw new Error("Remote storage configuration is required for this deletion");
   if (remote) {
     const { error } = await remote.remove([key]);
     if (error) throw new Error(`durable deletion failed (${error.name})`);

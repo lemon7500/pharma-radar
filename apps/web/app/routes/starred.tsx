@@ -7,6 +7,7 @@ import { exportBundle, importBundle, removeStar, useStarred, useReadSet, markRea
 import { publicationTime, publicationLabel } from "@aihot/contracts/publication-time";
 import { fullDateTime, shortSourceName } from "../lib/format";
 import { IconBookmark, IconDownload, IconClose } from "../components/icons";
+import { loadBookmarkAvailability, type BookmarkAvailability } from "../lib/bookmark-availability";
 
 /** Shared caches may keep this page for five minutes. */
 export function headers() {
@@ -38,7 +39,7 @@ export default function StarredPage() {
     return `${bt} ${timeOf(b).time || ""}`.localeCompare(`${at} ${timeOf(a).time || ""}`) || b.savedAt.localeCompare(a.savedAt);
   });
   const [mounted, setMounted] = useState(false);
-  const [availability, setAvailability] = useState<Record<string, string>>({});
+  const [availability, setAvailability] = useState<Record<string, BookmarkAvailability>>({});
   const [notice, setNotice] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   useEffect(() => setMounted(true), []);
@@ -47,10 +48,8 @@ export default function StarredPage() {
   useEffect(() => {
     if (!mounted || !starredIds) return;
     const controller = new AbortController();
-    fetch(`/api/site/items/availability?ids=${encodeURIComponent(starredIds)}`, { signal: controller.signal })
-      .then((r) => (r.ok ? r.json() : {}))
-      .then((data) => { if (!controller.signal.aborted) setAvailability(data); })
-      .catch(() => {});
+    loadBookmarkAvailability(starredIds.split(","), { signal: controller.signal })
+      .then((data) => { if (!controller.signal.aborted) setAvailability(data); });
     return () => controller.abort();
   }, [mounted, starredIds]);
 
@@ -111,7 +110,7 @@ export default function StarredPage() {
           <IconBookmark size={20} className="text-ink-4" />
           <p className="mt-3 text-[13px] text-ink-3">还没有收藏内容。点开任意一条内容，在详情页点击收藏即可添加。</p>
           <Link to="/" className="mt-4 text-[12.5px] font-medium text-accent hover:text-accent-ink">
-            浏览资料库 →
+            浏览导读 →
           </Link>
         </div>
       ) : (

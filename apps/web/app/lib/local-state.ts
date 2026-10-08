@@ -1,4 +1,5 @@
-// Reader state kept only in this browser; nothing about a reader leaves it. Storage failures degrade
+// Reader records stay in this browser; the reading list separately queries public status by item ID.
+// Storage failures degrade
 // silently. Keep the keys and formats once readers have data under them.
 import { useSyncExternalStore } from "react";
 import { beijingDate, isValidDate } from "@aihot/contracts/time";

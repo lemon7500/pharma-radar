@@ -83,7 +83,8 @@ export function registerAdmin(app: FastifyInstance) {
     const data = file ? await readFile(file).catch(() => null) : null;
     if (!data) return notFound(req, reply);
     const ext = file!.split(".").pop();
-    return reply.type(ext === "jpeg" || ext === "jpg" ? "image/jpeg" : `image/${ext}`).send(data);
+    return reply.header("X-Content-Type-Options", "nosniff").header("Cache-Control", "private, no-store")
+      .type(ext === "jpeg" || ext === "jpg" ? "image/jpeg" : `image/${ext}`).send(data);
   }));
   app.post("/api/admin/feedback-bans", adminHandler(async (req, reply, admin) => {
     const b = body<{ sourceHash: string; reason: string }>(req);

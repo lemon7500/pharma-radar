@@ -4,6 +4,8 @@
 
 小范围读者试用的 [任务说明](docs/reader-trial.md) 与 [空白反馈表](docs/reader-trial-feedback.csv) 已准备；实际试用和独立精选标注仍需分别完成。
 
+安全修复、验证范围与运行约束见 [安全与使用审查](docs/security-review-2026-10-08.md)。
+
 内容推荐与纠错方式见 [编辑判断与可靠性](docs/editorial-quality.md)。精选用于帮助发现值得阅读的资料；研究结论、材料范围和编辑判断分别说明。
 
 本项目基于 [AIHOT](https://github.com/KKKKhazix/AIHOT) 定制，保留上游 MIT 许可证。网页、后台、采集、模型筛选、事件归组、日报、RSS、公开 API 和 MCP 共用一套公开内容读取层。
@@ -19,7 +21,7 @@
 - 中药、天然产物和 AI 制药的主题关键词分别管理；含药理、制剂、临床、监管、论文与工具。
 - 首批来源为两种 Nature 期刊 RSS 和三组 Europe PMC 检索，展示摘要及原文链接。
 - 药学提示词区分计算、细胞、动物、临床和获批阶段。初始评分门槛沿用框架默认值，尚未用药学标注样本校准。
-- Supabase 私有存储保存上传原始文件，Render 本地磁盘只作缓存；匿名客户端不可访问后台数据库表。
+- Supabase 私有存储保存处理后的上传截图，Render 本地磁盘只作缓存；匿名客户端不可访问后台数据库表。
 - 默认关闭 X/微信付费采集、Jina、向量服务、飞书推送和模型排行榜。
 
 配置入口：[站名](industry/site.ts)、[分类](industry/taxonomy.ts)、[主题关键词](industry/topics.json)、[采集查询和信源](industry/sources.json)、[写作与筛选提示词](industry/prompts)。

@@ -8,6 +8,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { createRequestListener } from "@react-router/node";
 import { isApiOwned, resolveRedirect } from "@aihot/contracts/http-policy";
+import { securityHeaders } from "@aihot/contracts/security-headers";
 
 const PORT = Number(process.env.WEB_PORT || process.env.PORT || 3000);
 const HOST = process.env.WEB_HOST || "127.0.0.1";
@@ -51,7 +52,8 @@ async function serveStatic(pathname: string, res: import("node:http").ServerResp
     throw new BadRequest("malformed percent-encoding");
   }
   const file = path.join(CLIENT_DIR, decoded);
-  if (!file.startsWith(CLIENT_DIR)) return false;
+  const relative = path.relative(CLIENT_DIR, file);
+  if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return false;
   const info = await stat(file).catch(() => null);
   if (!info?.isFile()) return false;
   const immutable = pathname.startsWith("/assets/");
@@ -119,6 +121,7 @@ function pageCache(req: import("node:http").IncomingMessage, res: import("node:h
 }
 
 async function handle(req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) {
+  for (const [name, value] of Object.entries(securityHeaders((process.env.SITE_URL ?? "").startsWith("https://")))) res.setHeader(name, value);
   const raw = req.url ?? "/";
   const qi = raw.indexOf("?");
   const pathname = qi >= 0 ? raw.slice(0, qi) : raw;

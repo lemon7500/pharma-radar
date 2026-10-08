@@ -2,6 +2,8 @@ import { FEATURES } from "@aihot/industry/features";
 import Fastify, { type FastifyInstance } from "fastify";
 import { randomUUID } from "node:crypto";
 import { OAUTH_PROBE_PATHS, resolveRedirect } from "@aihot/contracts/http-policy";
+import { securityHeaders } from "@aihot/contracts/security-headers";
+import { config } from "@aihot/backend/config";
 import { sql } from "@aihot/backend/db";
 import { registerSite } from "./routes/site.ts";
 import { registerLeaderboard } from "./routes/leaderboard.ts";
@@ -29,6 +31,10 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   app.addHook("onRequest", async (req) => {
     req.requestId = req.id;
+  });
+
+  app.addHook("onRequest", async (_req, reply) => {
+    for (const [name, value] of Object.entries(securityHeaders(config.siteUrl.startsWith("https://")))) reply.header(name, value);
   });
 
   app.addHook("onResponse", async (req, reply) => {

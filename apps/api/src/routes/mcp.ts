@@ -291,7 +291,8 @@ export function registerMcp(app: FastifyInstance) {
     }
   };
 
-  app.route({ method: ["GET", "POST", "DELETE"], url: "/api/mcp", handler: serve });
+  // Fastify parses JSON before the SDK sees parsedBody; enforce the byte bound before that parse.
+  app.route({ method: ["GET", "POST", "DELETE"], url: "/api/mcp", bodyLimit: 256 * 1024, handler: serve });
   app.options("/api/mcp", async (req, reply) => {
     reply.header("Cache-Control", "no-store");
     if (!allowedOrigin(req.headers.origin)) return reply.code(403).type("application/json").send({ error: "origin_not_allowed" });

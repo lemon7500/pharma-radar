@@ -56,6 +56,19 @@ export interface GuardedResponse {
   text(): string;
 }
 
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+// Source-configured headers can carry provider keys as well as standard HTTP authentication.
+const CREDENTIAL_HEADER = /^(?:authorization|proxy-authorization|cookie2?|(?:x-)?(?:api[-_]?key|api[-_]?token|auth[-_]?token|access[-_]?token)|.*(?:secret|credential)|x-.*(?:auth|key|token))$/i;
+const CREDENTIAL_QUERY = /^(?:key|api[-_]?key|api[-_]?token|access[-_]?token|token|password|secret|client[-_]?secret)$/i;
+
+const credentialQuery = (url: URL) => [...url.searchParams.keys()].some((name) => CREDENTIAL_QUERY.test(name));
+
+function credentialed(url: URL, headers: Headers, body: string | undefined): boolean {
+  return body !== undefined || !!url.username || !!url.password
+    || [...headers.keys()].some((name) => CREDENTIAL_HEADER.test(name))
+    || credentialQuery(url);
+}
+
 /** How the collectors introduce themselves: the site's own crawler name and address (industry/site.ts). */
 export const DEFAULT_UA = `Mozilla/5.0 (compatible; ${SITE.crawlerName}/1.0; +${config.siteUrl}/about)`;
 
@@ -70,20 +83,43 @@ export async function guardedFetch(input: string, opts: GuardedFetchOptions = {}
   let url = await check(input);
   const maxRedirects = opts.maxRedirects ?? 5;
   const maxBytes = opts.maxBytes ?? 8 * 1024 * 1024;
+  let method = (opts.method ?? "GET").toUpperCase();
+  let requestBody = opts.body;
+  const headers = new Headers({ "user-agent": DEFAULT_UA, "accept-language": "zh-CN,zh;q=0.9,en;q=0.8", ...(opts.headers ?? {}) });
+  const sensitive = credentialed(url, headers, requestBody);
+  const queryCredentials = credentialQuery(url);
   for (let hop = 0; ; hop++) {
     const res = await undiciFetch(url, {
-      method: opts.method ?? "GET",
-      headers: { "user-agent": DEFAULT_UA, "accept-language": "zh-CN,zh;q=0.9,en;q=0.8", ...(opts.headers ?? {}) },
-      body: opts.body,
+      method,
+      headers,
+      body: requestBody,
       redirect: "manual",
       dispatcher: dispatcherFor(proxied(url, route)),
       signal,
     });
-    if (res.status >= 300 && res.status < 400 && res.headers.get("location")) {
+    if (REDIRECT_STATUSES.has(res.status) && res.headers.get("location")) {
       // Release the connection even when the next URL is refused or the redirect limit is reached.
       await res.body?.cancel();
-      if (hop >= maxRedirects) throw new Error(`Too many redirects for ${input}`);
-      url = await check(new URL(res.headers.get("location")!, url).toString());
+      if (hop >= maxRedirects) throw new Error("Too many redirects");
+      const next = new URL(res.headers.get("location")!, url);
+      if (sensitive && url.protocol === "https:" && next.protocol === "http:") {
+        throw new Error("Authenticated HTTPS downgrade refused");
+      }
+      const get = (res.status === 303 && method !== "GET" && method !== "HEAD")
+        || ((res.status === 301 || res.status === 302) && method === "POST");
+      if (get) {
+        method = "GET";
+        requestBody = undefined;
+        for (const name of [...headers.keys()]) if (name.startsWith("content-") || name === "transfer-encoding") headers.delete(name);
+      }
+      if (next.origin !== url.origin) {
+        // A body may itself contain a key (Dajiala): never replay it at a new origin. Headers
+        // removed here stay removed even if a later redirect returns to the original origin.
+        if (requestBody !== undefined) throw new Error("Cross-origin redirect with request body refused");
+        if (queryCredentials || credentialQuery(next)) throw new Error("Cross-origin redirect with URL credentials refused");
+        for (const name of [...headers.keys()]) if (CREDENTIAL_HEADER.test(name)) headers.delete(name);
+      }
+      url = await check(next.toString());
       continue;
     }
     const chunks: Buffer[] = [];

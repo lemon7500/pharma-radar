@@ -2,6 +2,8 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
+import { randomUUID } from "node:crypto";
+import { writeFileSync, rmSync, readdirSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { after, before, test } from "node:test";
@@ -226,4 +228,35 @@ test("browser caching preserves noindex and private sign-in responses", async ()
 test("a visitor cannot name its own address to the api without a trusted proxy in front", async () => {
   const res = await fetch(`${origin}/api/site/echo-client`, { headers: { "X-Forwarded-For": "6.6.6.6", "X-Real-IP": "6.6.6.6" } });
   assert.deepEqual(await res.json(), { forwarded: "127.0.0.1", real: "127.0.0.1" });
+});
+
+test("encoded traversal cannot serve a file beside the static client directory", async () => {
+  const name = `client-qa-${randomUUID()}.txt`;
+  const sibling = new URL(`../build/${name}`, import.meta.url);
+  const marker = `private-static-test-${randomUUID()}`;
+  writeFileSync(sibling, marker);
+  try {
+    const res = await fetch(`${origin}/%2e%2e%2f${name}`);
+    assert.notEqual(res.status, 200);
+    assert.ok(!(await res.text()).includes(marker));
+    const assetName = readdirSync(new URL("../build/client/assets/", import.meta.url)).find(name => name.endsWith(".js"));
+    assert.ok(assetName);
+    const asset = await fetch(`${origin}/assets/${assetName}`);
+    assert.equal(asset.status, 200);
+    await asset.arrayBuffer();
+  } finally {
+    rmSync(sibling);
+  }
+});
+
+test("browser protections cover public, sign-in, error and proxied responses", async () => {
+  for (const route of ["/", "/feedback", "/admin/login", "/missing-security-page", "/api/site/echo-client"]) {
+    const res = await fetch(origin + route);
+    assert.equal(res.headers.get("X-Content-Type-Options"), "nosniff");
+    assert.equal(res.headers.get("X-Frame-Options"), "DENY");
+    assert.equal(res.headers.get("Referrer-Policy"), "strict-origin-when-cross-origin");
+    assert.match(res.headers.get("Content-Security-Policy") ?? "", /frame-ancestors 'none'/);
+    assert.match(res.headers.get("Permissions-Policy") ?? "", /camera=\(\)/);
+    await res.text();
+  }
 });

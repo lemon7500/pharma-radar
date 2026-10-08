@@ -17,6 +17,9 @@ jobs:
       NODE_ENV: production
       NODE_EXTRA_CA_CERTS: deploy/supabase-ca.crt
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      SUPABASE_UPLOADS_BUCKET: pharma-uploads
       DATABASE_POOL_MAX: '3'
       SITE_URL: ${{ vars.SITE_URL }}
       SESSION_SECRET: ${{ secrets.SESSION_SECRET }}

@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import sharp from "sharp";
 import { after, test } from "node:test";
 import { config } from "@aihot/backend/config";
 import { closeDb, sql } from "@aihot/backend/db";
@@ -40,13 +41,13 @@ after(async () => {
   await closeDb();
 });
 
-const PNG = Buffer.from("89504e470d0a1a0a0000000d4948445200000001000000010806000000", "hex");
 let n = 0;
 async function submit(): Promise<{ id: number; file: string }> {
   n += 1;
   // Submitted while forwarding is off, so the test drives every attempt itself.
   delete process.env.FEISHU_INTERNAL_ENABLED;
-  const { id } = await submitFeedback({ content: `反馈 ${T}-${n}`, screenshot: { mime: "image/png", data: Buffer.concat([PNG, Buffer.from(`${T}-${n}`)]) }, ip: `203.0.113.${n}`, userAgent: "test" });
+  const image = await sharp({ create: { width: 2, height: 2, channels: 4, background: { r: n, g: 10, b: 20, alpha: 1 } } }).png().toBuffer();
+  const { id } = await submitFeedback({ content: `反馈 ${T}-${n}`, screenshot: { mime: "image/png", data: image }, ip: `203.0.113.${n}`, userAgent: "test" });
   process.env.FEISHU_INTERNAL_ENABLED = "true";
   const [row] = await sql<{ screenshot_key: string }[]>`SELECT screenshot_key FROM feedback WHERE id = ${id}`;
   return { id, file: path.join(config.dataDir, "feedback-screenshots", row!.screenshot_key.slice("local:".length)) };

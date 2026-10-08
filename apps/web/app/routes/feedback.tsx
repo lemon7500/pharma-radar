@@ -7,6 +7,7 @@ import { KEYS } from "../lib/local-state";
 import { IconCheck, IconClose, IconImage } from "../components/icons";
 import { RingMark } from "../components/Logo";
 import { AsideCard, ReadingLayout } from "../components/ui/Page";
+import { FeedbackSubmission } from "../lib/feedback-submit";
 
 /** Shared caches may keep this page for five minutes. */
 export function headers() {
@@ -77,6 +78,8 @@ export default function FeedbackPage() {
   const [state, setState] = useState<{ kind: "idle" | "sending" | "done" | "error"; message?: string; id?: number }>({ kind: "idle" });
   const [dragging, setDragging] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const sending = useRef(false);
+  const submission = useRef(new FeedbackSubmission());
 
   useEffect(() => {
     const saved = readDraft();
@@ -84,9 +87,10 @@ export default function FeedbackPage() {
     else if (!initialUrl && document.referrer.startsWith(location.origin)) setDraft((d) => ({ ...d, pageUrl: document.referrer }));
   }, []);
   useEffect(() => {
+    if (state.kind === "done") return;
     const t = setTimeout(() => writeDraft(draft.content || draft.email ? draft : null), 400);
     return () => clearTimeout(t);
-  }, [draft]);
+  }, [draft, state.kind]);
 
   useEffect(() => {
     if (!shot) return;
@@ -94,6 +98,7 @@ export default function FeedbackPage() {
   }, [shot]);
 
   const pick = (file: File | null | undefined) => {
+    if (sending.current) return;
     if (!file) return;
     if (!/^image\/(png|jpeg|webp)$/.test(file.type)) return setState({ kind: "error", message: "截图需要是 PNG、JPEG 或 WebP。" });
     if (file.size > MAX_IMAGE) return setState({ kind: "error", message: "截图原图不超过 5 MB。" });
@@ -112,23 +117,27 @@ export default function FeedbackPage() {
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (sending.current) return;
     if (draft.content.trim().length < 2) return setState({ kind: "error", message: "请写下反馈内容。" });
+    sending.current = true;
     setState({ kind: "sending" });
     try {
-      const form = new FormData();
-      form.set("content", draft.content);
-      form.set("email", draft.email);
-      form.set("pageUrl", draft.pageUrl);
-      if (shot) form.set("screenshot", shot.file);
-      const res = await fetch("/api/site/feedback", { method: "POST", body: form });
-      const body = await res.json().catch(() => ({}));
+      const res = await submission.current.send(draft, shot?.file ?? null);
+      const body = await res.json().catch((error: unknown) => { if (res.ok) throw error; return {}; });
       if (!res.ok) return setState({ kind: "error", message: body.detail ?? "提交失败，请稍后再试。" });
-      writeDraft(null);
+      if (!Number.isSafeInteger(body.id) || body.id < 1) throw new Error("Invalid feedback receipt");
+      const stored = readDraft();
+      if (!stored || (stored.content === draft.content && stored.email === draft.email && stored.pageUrl === draft.pageUrl)) writeDraft(null);
+      submission.current.complete();
       setState({ kind: "done", id: body.id });
       setDraft({ content: "", email: "", pageUrl: "" });
       setShot(null);
-    } catch {
-      setState({ kind: "error", message: "网络不太顺，草稿已保存在本机，稍后再提交。" });
+    } catch (error) {
+      setState({ kind: "error", message: error instanceof Error && error.name === "TimeoutError"
+        ? "等待响应超时，草稿已保留。可以重试同一份反馈，系统会避免重复提交。"
+        : "网络不太顺，草稿已保留，可以稍后重试。" });
+    } finally {
+      sending.current = false;
     }
   };
 
@@ -144,7 +153,7 @@ export default function FeedbackPage() {
             反馈编号 <span className="mono font-semibold text-ink">#{state.id}</span>，需要回复时我们会引用这个编号。
           </p>
           <Link to="/" className="mt-8 inline-flex h-10 items-center rounded-full bg-ink px-6 text-[14px] font-medium text-bg transition-opacity hover:opacity-90">
-            回到精选
+            回到导读
           </Link>
         </div>
       </ReadingLayout>
@@ -177,7 +186,7 @@ export default function FeedbackPage() {
         }}
         className={`card mt-6 overflow-hidden transition-shadow ${dragging ? "shadow-[0_0_0_3px_var(--accent-soft)] ring-1 ring-accent" : ""}`}
       >
-        <div className="space-y-5 p-5 sm:p-6">
+        <fieldset disabled={state.kind === "sending"} className="space-y-5 p-5 sm:p-6">
           <div>
             <label htmlFor="fb-content" className={label}>
               想说点什么？
@@ -244,7 +253,7 @@ export default function FeedbackPage() {
                 </span>
               </button>
             )}
-            <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="sr-only" onChange={(e) => pick(e.target.files?.[0])} />
+            <input ref={fileRef} type="file" aria-label="选择问题截图" accept="image/png,image/jpeg,image/webp" className="sr-only" onChange={(e) => pick(e.target.files?.[0])} />
           </div>
 
           <Presence show={state.kind === "error"} enter="anim-notice-in" exit="anim-fade-out" duration={160}>
@@ -252,7 +261,7 @@ export default function FeedbackPage() {
               {state.kind === "error" ? state.message : ""}
             </p>
           </Presence>
-        </div>
+        </fieldset>
 
         <div className="flex flex-col-reverse gap-4 border-t border-line-soft bg-bg-sunk/50 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 dark:bg-bg-muted/30">
           <p className="text-[12px] leading-relaxed text-ink-4 sm:max-w-[400px]">

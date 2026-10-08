@@ -45,10 +45,15 @@ function unsign(signed: string | undefined): string | null {
 }
 
 export function parseCookies(header: string | undefined): Record<string, string> {
-  const out: Record<string, string> = {};
+  const out: Record<string, string> = Object.create(null);
   for (const part of (header ?? "").split(";")) {
     const i = part.indexOf("=");
-    if (i > 0) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+    if (i <= 0) continue;
+    try {
+      out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+    } catch {
+      // A damaged cookie (including another application's cookie) is not an outage.
+    }
   }
   return out;
 }
@@ -109,10 +114,36 @@ async function feishuUser(code: string): Promise<FeishuUser> {
 
 export class LoginRejected extends Error {}
 
-async function createSession(userId: number, userAgent: string | undefined): Promise<string> {
+type AuthMethod = "password" | "feishu";
+
+/** Bind opaque sessions to the active credentials without storing a password or provider secret. */
+function sessionVersion(method: AuthMethod, password = config.adminPassword): string | null {
+  const signingSecret = credential("auth", "SESSION_SECRET");
+  if (!signingSecret) return null;
+  let inputs: string[];
+  if (method === "password") {
+    if (!password || password.length < 12) return null;
+    inputs = [password];
+  } else {
+    const appId = credential("integrations", "FEISHU_LOGIN_APP_ID");
+    const appSecret = credential("integrations", "FEISHU_LOGIN_APP_SECRET");
+    if (!appId || !appSecret) return null;
+    inputs = [appId, appSecret];
+  }
+  return createHmac("sha256", signingSecret).update(JSON.stringify(["admin-session", 1, method, ...inputs])).digest("hex");
+}
+
+function sameVersion(given: string | null, expected: string | null): boolean {
+  if (!given || !expected) return false;
+  const a = Buffer.from(given);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+async function createSession(userId: number, userAgent: string | undefined, method: AuthMethod, version: string): Promise<string> {
   const token = randomBytes(32).toString("base64url");
-  await sql`INSERT INTO admin_sessions (id_hash, user_id, csrf_token, expires_at, user_agent)
-            VALUES (${sha256(token)}, ${userId}, ${randomBytes(18).toString("base64url")}, ${new Date(Date.now() + SESSION_DAYS * 86400_000)}, ${userAgent?.slice(0, 300) ?? null})`;
+  await sql`INSERT INTO admin_sessions (id_hash, user_id, csrf_token, expires_at, user_agent, auth_method, credential_version)
+            VALUES (${sha256(token)}, ${userId}, ${randomBytes(18).toString("base64url")}, ${new Date(Date.now() + SESSION_DAYS * 86400_000)}, ${userAgent?.slice(0, 300) ?? null}, ${method}, ${version})`;
   return token;
 }
 
@@ -132,7 +163,9 @@ export async function completeLogin(code: string, state: string, stateCookie: st
     ? await sql<{ id: number }[]>`UPDATE admin_users SET feishu_union_id = coalesce(feishu_union_id, ${u.union_id ?? null}), email = coalesce(email, ${email}),
         display_name = coalesce(${u.name ?? null}, display_name), last_login_at = now() WHERE id = ${existing.id} RETURNING id`
     : await sql<{ id: number }[]>`INSERT INTO admin_users (feishu_union_id, email, display_name, last_login_at) VALUES (${u.union_id ?? null}, ${email}, ${u.name ?? null}, now()) RETURNING id`;
-  const token = await createSession(user!.id, userAgent);
+  const version = sessionVersion("feishu");
+  if (!version) throw new LoginRejected("飞书登录配置已失效，请联系管理员");
+  const token = await createSession(user!.id, userAgent, "feishu", version);
   await audit(`admin:${user!.id}`, "auth.login", null, null, null, { union_id: u.union_id ?? null });
   return { token, returnTo, userId: user!.id };
 }
@@ -144,24 +177,34 @@ const PASSWORD_ADMIN = "admin@local";
 export async function passwordLogin(password: string, returnTo: string, userAgent: string | undefined) {
   const expected = config.adminPassword;
   if (!expected || expected.length < 12) throw new LoginRejected("还没有设置管理员密码（环境变量 ADMIN_PASSWORD，至少 12 位）");
+  const version = sessionVersion("password", expected);
+  if (!version) throw new Error("SESSION_SECRET is not configured");
   const given = createHmac("sha256", "admin-password").update(password).digest();
   const wanted = createHmac("sha256", "admin-password").update(expected).digest();
   if (!timingSafeEqual(given, wanted)) throw new LoginRejected("密码不对");
   const [user] = await sql<{ id: number }[]>`
     INSERT INTO admin_users (email, display_name, last_login_at) VALUES (${PASSWORD_ADMIN}, '管理员', now())
     ON CONFLICT (email) DO UPDATE SET last_login_at = now() RETURNING id`;
-  const token = await createSession(user!.id, userAgent);
+  const token = await createSession(user!.id, userAgent, "password", version);
   await audit(`admin:${user!.id}`, "auth.login", null, null, null, { method: "password" });
   return { token, returnTo: safeReturn(returnTo), userId: user!.id };
 }
 
 export async function sessionPrincipal(cookieHeader: string | undefined): Promise<AdminPrincipal | null> {
   const token = parseCookies(cookieHeader)[SESSION_COOKIE];
-  if (token) {
-    const [row] = await sql<{ user_id: number; csrf_token: string; name: string | null; email: string | null }[]>`
-      SELECT s.user_id, s.csrf_token, u.display_name AS name, u.email FROM admin_sessions s JOIN admin_users u ON u.id = s.user_id
+  if (token && /^[A-Za-z0-9_-]{43}$/.test(token)) {
+    const [row] = await sql<{
+      user_id: number; csrf_token: string; name: string | null; email: string | null;
+      feishu_union_id: string | null; auth_method: AuthMethod | null; credential_version: string | null;
+    }[]>`
+      SELECT s.user_id, s.csrf_token, u.display_name AS name, u.email, u.feishu_union_id, s.auth_method, s.credential_version
+      FROM admin_sessions s JOIN admin_users u ON u.id = s.user_id
       WHERE s.id_hash = ${sha256(token)} AND s.expires_at > now()`;
-    if (row) return { userId: row.user_id, name: row.name ?? row.email ?? `admin:${row.user_id}`, csrf: row.csrf_token, dev: false };
+    if (row && (row.auth_method === "password" || row.auth_method === "feishu") && sameVersion(row.credential_version, sessionVersion(row.auth_method))) {
+      const allowed = row.auth_method === "password" ? row.email === PASSWORD_ADMIN
+        : !!((row.feishu_union_id && config.adminUnionIds.includes(row.feishu_union_id)) || (row.email && config.adminEmails.includes(row.email.toLowerCase())));
+      if (allowed) return { userId: row.user_id, name: row.name ?? row.email ?? `admin:${row.user_id}`, csrf: row.csrf_token, dev: false };
+    }
   }
   if (config.devAdmin && config.environmentName !== "production") return { userId: null, name: config.devAdmin.displayName, csrf: "dev", dev: true };
   return null;
@@ -169,7 +212,18 @@ export async function sessionPrincipal(cookieHeader: string | undefined): Promis
 
 export async function endSession(cookieHeader: string | undefined) {
   const token = parseCookies(cookieHeader)[SESSION_COOKIE];
-  if (token) await sql`DELETE FROM admin_sessions WHERE id_hash = ${sha256(token)}`;
+  if (token && /^[A-Za-z0-9_-]{43}$/.test(token)) await sql`DELETE FROM admin_sessions WHERE id_hash = ${sha256(token)}`;
+}
+
+/** The authenticated user revokes all of their devices; the API requires their session CSRF token. */
+export async function endAllSessions(admin: AdminPrincipal): Promise<number> {
+  if (admin.dev || admin.userId === null) throw Object.assign(new Error("A real admin session is required."), { statusCode: 400 });
+  return sql.begin(async (tx) => {
+    const removed = await tx`DELETE FROM admin_sessions WHERE user_id = ${admin.userId} RETURNING id_hash`;
+    await tx`INSERT INTO audit_log (actor, action, subject, before, after)
+      VALUES (${actorOf(admin)}, 'auth.logout_all', ${`admin:${admin.userId}`}, ${tx.json({ sessions: removed.length })}, ${tx.json({ sessions: 0 })})`;
+    return removed.length;
+  });
 }
 
 /** Every manual change: who, when, what, why. */

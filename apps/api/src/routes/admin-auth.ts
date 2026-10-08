@@ -4,6 +4,7 @@ import { config } from "@aihot/backend/config";
 import {
   completeLogin,
   cookie,
+  endAllSessions,
   endSession,
   feishuLoginConfigured,
   LoginRejected,
@@ -23,21 +24,38 @@ import { sendProblem } from "../http/respond.ts";
 const secure = () => config.siteUrl.startsWith("https://");
 
 /**
- * Password attempts: at most 10 per client address and 50 in all per 15 minutes. The overall cap holds
- * even when a client forges its address; with a 12+ character password that is far too slow to guess.
+ * Ten admitted attempts per client / 15 minutes, plus a bounded burst limit. Already rejected
+ * clients cannot consume other clients' allowance. A global burst pauses for 30 seconds; rejected
+ * requests cannot prolong that pause. All stored timestamp arrays and the client map are bounded.
  */
-const attempts = new Map<string, number[]>();
-function over(key: string, limit: number, now: number): boolean {
-  const recent = (attempts.get(key) ?? []).filter((t) => now - t < 15 * 60_000);
-  recent.push(now);
-  attempts.set(key, recent);
-  return recent.length > limit;
-}
-function tooManyAttempts(ip: string): boolean {
-  const now = Date.now();
-  if (attempts.size > 5000) attempts.clear();
-  const perClient = over(`ip:${ip}`, 10, now);
-  return over("all", 50, now) || perClient;
+export function createPasswordAttemptLimiter(): (ip: string, now?: number) => number | null {
+  const clientWindow = 15 * 60_000;
+  const clients = new Map<string, number[]>();
+  let globalAttempts: number[] = [];
+  let cooldownUntil = 0;
+  let pruneAfter = 0;
+  return (ip, now = Date.now()) => {
+    if (now >= pruneAfter) {
+      for (const [key, times] of clients) if (now - times[times.length - 1]! >= clientWindow) clients.delete(key);
+      pruneAfter = now + 60_000;
+    }
+    const recent = (clients.get(ip) ?? []).filter((time) => now - time < clientWindow);
+    if (recent.length >= 10) return Math.max(1, Math.ceil((recent[0]! + clientWindow - now) / 1000));
+    if (now < cooldownUntil) return Math.max(1, Math.ceil((cooldownUntil - now) / 1000));
+    globalAttempts = globalAttempts.filter((time) => now - time < 60_000);
+    if (globalAttempts.length >= 50) {
+      cooldownUntil = now + 30_000;
+      globalAttempts = [];
+      return 30;
+    }
+    recent.push(now);
+    // Refresh insertion order only for admitted attempts, preserving other clients' limits.
+    clients.delete(ip);
+    if (clients.size >= 5000) clients.delete(clients.keys().next().value!);
+    clients.set(ip, recent);
+    globalAttempts.push(now);
+    return null;
+  };
 }
 
 const loginPage = (returnTo: string, error?: string) => `/admin/login?${new URLSearchParams({ return: safeReturn(returnTo), ...(error ? { error } : {}) })}`;
@@ -67,6 +85,7 @@ export function adminHandler(fn: AdminHandler) {
 }
 
 export function registerAdminAuth(app: FastifyInstance) {
+  const attemptDelay = createPasswordAttemptLimiter();
   // The sign-in form posts as a plain HTML form.
   app.addContentTypeParser("application/x-www-form-urlencoded", { parseAs: "string", bodyLimit: 16 * 1024 }, (_req, body, done) => {
     done(null, Object.fromEntries(new URLSearchParams(String(body))));
@@ -80,11 +99,12 @@ export function registerAdminAuth(app: FastifyInstance) {
 
   app.get("/api/auth/options", async (_req, reply) => reply.header("Cache-Control", "no-store").send({ password: !!config.adminPassword, feishu: feishuLoginConfigured() }));
 
-  app.post("/api/auth/password", async (req, reply) => {
+  app.post("/api/auth/password", { bodyLimit: 16 * 1024 }, async (req, reply) => {
     const b = (req.body ?? {}) as Record<string, string>;
     const returnTo = String(b.return ?? "/admin");
     reply.header("Cache-Control", "no-store");
-    if (tooManyAttempts(String(req.ip))) return reply.redirect(loginPage(returnTo, "too-many"), 303);
+    const delay = attemptDelay(String(req.ip));
+    if (delay !== null) return reply.header("Retry-After", delay).redirect(loginPage(returnTo, "too-many"), 303);
     try {
       const { token, returnTo: target } = await passwordLogin(String(b.password ?? ""), returnTo, req.headers["user-agent"]);
       reply.header("Set-Cookie", cookie(SESSION_COOKIE, token, SESSION_DAYS * 86400, secure()));
@@ -132,6 +152,11 @@ export function registerAdminAuth(app: FastifyInstance) {
     reply.header("Set-Cookie", cookie(SESSION_COOKIE, "", 0, secure())).header("Cache-Control", "no-store");
     return reply.redirect("/", 303);
   });
+
+  app.post("/api/admin/sessions/logout-all", adminHandler(async (_req, reply, admin) => {
+    const revoked = await endAllSessions(admin);
+    return reply.header("Set-Cookie", cookie(SESSION_COOKIE, "", 0, secure())).send({ revoked });
+  }));
 
   app.get("/api/admin/me", adminHandler(async (_req, _reply, admin) => ({ name: admin.name, csrf: admin.csrf, dev: admin.dev })));
 }

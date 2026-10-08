@@ -15,6 +15,7 @@ import { linkRelatedStories } from "@aihot/backend/events/group";
 import { catchUpReports } from "@aihot/backend/reports/compose";
 import { beat, startHeartbeat } from "@aihot/backend/operations/heartbeat";
 import { dailyRetention } from "@aihot/backend/operations/retention";
+import { cleanupFeedbackUploads } from "@aihot/backend/operations/feedback-abuse";
 import { autoReleaseUnknownReceipts } from "@aihot/backend/admin/runs";
 import { markStalePendingReceipts } from "@aihot/backend/providers/receipts";
 import { backfillResearch } from "@aihot/backend/research/backfill";
@@ -75,6 +76,12 @@ try {
   await registerPublicationJobs(boss);
   heartbeat = startHeartbeat("worker");
   await recordRun("publication.observe", observePublicReleaseTimes);
+  await recordRun("feedback.maintenance", async () => {
+    await cleanupFeedbackUploads();
+    const [remaining] = await sql<{ cleanupPending: number }[]>`SELECT count(*)::int AS "cleanupPending"
+      FROM feedback_submission_attempts WHERE cleanup_needed`;
+    return { checked: true, cleanupPending: remaining!.cleanupPending };
+  });
   await recordRun("batch.recover", async()=>({stale:await markStalePendingReceipts(),released:await autoReleaseUnknownReceipts()}));
   if (process.env.COLLECT_ENABLED !== "false") await recordRun("sources.schedule",scheduleDueSources);
   await recordRun("content.sweep",sweepUnprocessed);

@@ -5,7 +5,7 @@ import { NavLink, Outlet, useLocation, useNavigation, type ShouldRevalidateFunct
 import type { Route } from "./+types/layout";
 import { RingMark } from "../../components/Logo";
 import { NavigationProgress } from "../../components/shell/Chrome";
-import type { AdminMe } from "../../features/admin/action";
+import { useAdminAction, type AdminMe } from "../../features/admin/action";
 import { Toaster } from "../../features/admin/toast";
 import { adminGet } from "../../lib/admin.server";
 
@@ -61,6 +61,17 @@ function NavItem({ to, label, count, tone }: { to: string; label: string; count?
   );
 }
 
+function SessionControls() {
+  const { run, busy } = useAdminAction();
+  return <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[12.5px] text-ink-3">
+    <form method="post" action="/api/auth/logout"><button type="submit" className="min-h-11 hover:text-ink">退出登录</button></form>
+    <button type="button" disabled={busy} className="min-h-11 hover:text-ink disabled:opacity-50" onClick={async () => {
+      const result = await run("POST", "/api/admin/sessions/logout-all", {}, { revalidate: false });
+      if (result) window.location.assign("/admin/login");
+    }}>退出所有设备</button>
+  </div>;
+}
+
 export default function AdminLayout({ loaderData }: Route.ComponentProps) {
   const { me, counts } = loaderData;
   const navigation = useNavigation();
@@ -91,9 +102,7 @@ export default function AdminLayout({ loaderData }: Route.ComponentProps) {
             <span className="truncate">{me.name}</span>
             {me.dev && <span className="rounded bg-amber/15 px-1.5 text-[11px] font-medium text-amber">开发</span>}
           </div>
-          <form method="post" action="/api/auth/logout" className="mt-1.5">
-            <button type="submit" className="text-ink-4 hover:text-ink-2">退出登录</button>
-          </form>
+          <SessionControls />
         </div>
       </aside>
       <div className="flex min-w-0 flex-1 flex-col">
@@ -115,6 +124,7 @@ export default function AdminLayout({ loaderData }: Route.ComponentProps) {
               );
             })}
           </nav>
+          <div className="flex flex-wrap items-center justify-between gap-x-3 border-t border-line-soft px-4"><span className="text-[12.5px] text-ink-3">{me.name}</span><SessionControls /></div>
         </div>
         <main className="min-w-0 flex-1">
           <Outlet />

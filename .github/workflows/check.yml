@@ -51,6 +51,8 @@ jobs:
 
       - name: Install
         run: npm ci --no-audit --no-fund
+      - name: Runtime dependency security advisories
+        run: npm audit --omit=dev --audit-level=high
       - name: Typecheck
         run: npm run typecheck
       - name: Editorial reference integrity
