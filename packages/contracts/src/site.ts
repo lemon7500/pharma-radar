@@ -267,6 +267,8 @@ export interface StoryReportView {
   summary: string | null;
   source: SourceRef;
   publishedAt: string;
+  /** Accurate display semantics; publishedAt retains the legacy chronology fallback. */
+  publicationTime?: PublicationTime;
   originalUrl: string;
   selected: boolean;
   factId: string;

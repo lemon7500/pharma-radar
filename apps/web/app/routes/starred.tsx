@@ -30,12 +30,12 @@ export default function StarredPage() {
   const starred = useStarred();
   const read = useReadSet();
   const [sort,setSort] = useState("saved"); const [unread,setUnread] = useState(false);
-  const timeOf = (s:typeof starred[number]) => publicationTime({publishedAt:s.publishedAt,research:s.publishedDate ? {bibliography:{publishedDate:s.publishedDate}} : null});
+  const timeOf = (s:typeof starred[number]) => s.publicationTime ?? publicationTime({publishedAt:s.publishedAt,research:s.publishedDate ? {bibliography:{publishedDate:s.publishedDate}} : null});
   const visible = starred.filter(s => !unread || !read.has(s.id)).slice().sort((a,b) => {
     if(sort === "saved") return b.savedAt.localeCompare(a.savedAt);
     const at = timeOf(a).date, bt = timeOf(b).date;
     if(!at || !bt) return at ? -1 : bt ? 1 : b.savedAt.localeCompare(a.savedAt);
-    return bt.localeCompare(at) || b.savedAt.localeCompare(a.savedAt);
+    return `${bt} ${timeOf(b).time || ""}`.localeCompare(`${at} ${timeOf(a).time || ""}`) || b.savedAt.localeCompare(a.savedAt);
   });
   const [mounted, setMounted] = useState(false);
   const [availability, setAvailability] = useState<Record<string, string>>({});
@@ -93,7 +93,7 @@ export default function StarredPage() {
           <input ref={fileRef} type="file" accept="application/json,.json" className="sr-only" onChange={(e) => doImport(e.target.files?.[0])} />
         </div>
       </header>
-      <p className="rounded-tile border border-line bg-surface px-4 py-2.5 text-[12.5px] text-ink-3">收藏只保存在当前浏览器；清除浏览器数据或换设备后不会同步。</p>
+      <p className="rounded-tile border border-line bg-surface px-4 py-2.5 text-[12.5px] text-ink-3">收藏只保存在当前浏览器；清除浏览器数据或换设备后不会同步。导入文件保留日期，具体发表时刻请打开资料页核对。</p>
       {mounted && starred.length > 0 && <div className="reading-list-toolbar"><span>{visible.length} 条资料</span><label>排序<select value={sort} onChange={e => setSort(e.target.value)}><option value="saved">最近收藏</option><option value="published">最近发表</option></select></label><label><input type="checkbox" checked={unread} onChange={e => setUnread(e.target.checked)} /> 仅看未读</label></div>}
       <Presence show={!!notice} enter="anim-notice-in" exit="anim-fade-out" duration={160}>
         <div

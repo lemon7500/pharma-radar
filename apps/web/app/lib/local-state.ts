@@ -2,6 +2,7 @@
 // silently. Keep the keys and formats once readers have data under them.
 import { useSyncExternalStore } from "react";
 import { beijingDate, isValidDate } from "@aihot/contracts/time";
+import { publicationTime, type PublicationTime } from "@aihot/contracts/publication-time";
 
 export const KEYS = {
   starred: "aihot-starred-items",
@@ -24,6 +25,7 @@ export interface LocalStarredItem {
   savedAt: string;
   publishedAt: string | null;
   publishedDate?: string | null;
+  publicationTime?: PublicationTime;
   score: number | null;
   aiSelected: boolean;
 }
@@ -119,15 +121,31 @@ function isDisplayableDate(value: unknown): value is string {
   }
 }
 
-function normalizeStarred(v: Record<string, unknown>): LocalStarredItem {
+function savedPublicationTime(value:unknown, publishedAt:string|null, acceptClock:boolean): PublicationTime | null {
+  if(!value || typeof value!=="object") return null;
+  const p=value as Record<string,unknown>;
+  if(p.precision==="unknown" && p.date===null && p.time===null) return {date:null,time:null,precision:"unknown"};
+  if(typeof p.date!=="string" || !isValidDate(p.date) || p.date>beijingDate(new Date())) return null;
+  if(p.precision==="day" && p.time===null) return {date:p.date,time:null,precision:"day"};
+  if(p.precision!=="time" || typeof p.time!=="string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(p.time)) return null;
+  const expected=publicationTime({publishedAt,sourcePrecision:"time"});
+  if(acceptClock && expected.date===p.date && expected.time===p.time) return {date:p.date,time:p.time,precision:"time"};
+  // External files cannot attest original source precision. Retain their date, never promote a declared clock.
+  return {date:p.date,time:null,precision:"day"};
+}
+
+function normalizeStarred(v: Record<string, unknown>, acceptSavedClock=true): LocalStarredItem {
+  const publishedAt=isDisplayableDate(v.publishedAt) ? v.publishedAt : null;
+  const time=savedPublicationTime(v.publicationTime,publishedAt,acceptSavedClock);
   return {
     id: String(v.id),
     title: String(v.title),
     summary: typeof v.summary === "string" ? v.summary : null,
     sourceName: typeof v.sourceName === "string" ? v.sourceName : "",
     savedAt: isDisplayableDate(v.savedAt) ? v.savedAt : new Date().toISOString(),
-    publishedAt: isDisplayableDate(v.publishedAt) ? v.publishedAt : null,
+    publishedAt,
     ...(typeof v.publishedDate === "string" && isValidDate(v.publishedDate) ? { publishedDate:v.publishedDate } : {}),
+    ...(time ? {publicationTime:time} : {}),
     score: typeof v.score === "number" ? v.score : null,
     aiSelected: v.aiSelected === true,
   };
@@ -293,7 +311,7 @@ export function mergeLocalData(incoming: { starred: unknown[]; read: unknown[]; 
     if (!isStarredItem(s)) { starredSkipped++; continue; }
     if (have.has(s.id)) continue;
     have.add(s.id);
-    additions.push(normalizeStarred(s as unknown as Record<string, unknown>));
+    additions.push(normalizeStarred(s as unknown as Record<string, unknown>,false));
   }
   const room = Math.max(0, STARRED_LIMIT - current.length);
   const accepted = additions.slice(0, room);

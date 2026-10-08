@@ -9,6 +9,7 @@ import { SITE, withSubject } from "@aihot/industry/site";
 import { config } from "@aihot/backend/config";
 import { MCP_TOOL_NAMES as T } from "@aihot/contracts/mcp";
 import { isValidDate } from "@aihot/contracts/time";
+import { publicationLabel, publicationTime } from "@aihot/contracts/publication-time";
 
 import { v1Items } from "@aihot/backend/publication/v1";
 import { SearchBusyError } from "@aihot/backend/publication/pool";
@@ -98,7 +99,7 @@ function itemsText(heading: string, res: ItemList): string {
   res.items.forEach((it, i) => {
     lines.push(`${i + 1}. ${it.title}`);
     lines.push(`来源：${it.source.name}`);
-    lines.push(`时间：${it.publishedAt ?? it.discoveredAt}`);
+    lines.push(`发表时间：${publicationLabel(it.publicationTime ?? publicationTime(it))}`);
     if (it.summary) lines.push(`摘要：${it.summary}`);
     if (it.reason) lines.push(`推荐理由：${it.reason}`);
     lines.push(`${SITE.name}：${it.links.aihot}`);
@@ -184,7 +185,7 @@ export function buildMcpServer(): McpServer {
       const lines = [`${SITE.name} 事件：${story.title}`, `状态：${story.status === "active" ? "持续更新" : "历史事件"}｜${story.reportCount} 篇报道｜${story.sourceCount} 个来源`, `最新进展：${story.latest}`];
       if (story.digest) lines.push("", `事件综述：${story.digest}`);
       lines.push("", "报道时间线：");
-      story.reports.forEach((r, i) => lines.push(`${i + 1}. ${r.publishedAt}｜${r.source.name}${r.source.firstParty ? "（一手）" : ""}｜${r.title}｜${r.links.aihot}`));
+      story.reports.forEach((r, i) => lines.push(`${i + 1}. ${publicationLabel(r.publicationTime)} · 发表｜${r.source.name}${r.source.firstParty ? "（一手）" : ""}｜${r.title}｜${r.links.aihot}`));
       lines.push("", `事件页：${story.links.aihot}`);
       return ok(lines.join("\n"), { schemaVersion: 1, story });
     }),

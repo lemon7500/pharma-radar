@@ -18,7 +18,8 @@ async function record(index:number, date:string|null, publishedAt:Date|null, arr
   return articleId;
 }
 test("bibliographic day wins over arrival and timestamp; timezone boundaries, invalid and future dates remain truthful", () => {
-  assert.deepEqual(publicationTime({publishedAt:"2026-09-30T23:35:00Z"},now),{date:"2026-10-01",time:"07:35",precision:"time"});
+  assert.deepEqual(publicationTime({publishedAt:"2026-09-30T23:35:00Z",sourcePrecision:"time"},now),{date:"2026-10-01",time:"07:35",precision:"time"});
+  assert.equal(publicationTime({publishedAt:"2026-09-30T23:35:00Z"},now).time,null,"legacy normalized timestamps alone do not prove source clock precision");
   assert.deepEqual(publicationTime({publishedAt:"2026-09-30T23:35:00Z",research:{bibliography:{publishedDate:"2020-01-02"}}},now),{date:"2020-01-02",time:null,precision:"day"});
   assert.equal(publicationTime({publishedAt:"2026-09-30T00:00:00Z"},now).time,null);
   assert.equal(publicationTime({publishedAt:"2026-09-30T16:00:00Z"},now).time,null);

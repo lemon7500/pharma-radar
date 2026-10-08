@@ -63,8 +63,20 @@ test("clinical trials and patients do not loosen agriculture or food-use exclusi
   const cases: Array<[string, string?]> = [
     ["Natural products for treatment of crop disease"],
     ["Antibacterial natural products protect medicinal plants against crop disease"],
+    ["OsPDR17 transports 5,10-diketo-casbene and enhances rice resistance to bacterial blight",
+      "We assessed diterpenoid transport in rice and evaluated the resistance of treated plants to bacterial plant pathogens. The study examines crop protection."],
+    ["Natural compounds and ecological roles in soil organisms"],
     ["Antibacterial natural products for food preservation",
       "A clinical study in patients examined preserved food consumption. Natural products showed antibacterial activity for food preservation."],
   ];
   for (const [title, bodyText] of cases) assert.equal(preliminaryAdmission(input(title, bodyText)), false, title);
+});
+
+test("mixed sources retain explicit drug research and medicinal quality-control indexes", () => {
+  for (const [title, bodyText] of [
+    ["Pharmacokinetics of antimicrobial drug candidates from crop-associated fungi"],
+    ["Quality control of medicinal plants grown in agricultural fields",
+      "We evaluated the quality control of medicinal plants using chemical profiles and measured batch composition across agricultural cultivation conditions."],
+    ["Drug safety of natural compounds recovered from food processing materials"],
+  ] as Array<[string, string?]>) assert.equal(preliminaryAdmission(input(title, bodyText)), true, title);
 });

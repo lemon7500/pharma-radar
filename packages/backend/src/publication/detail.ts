@@ -8,6 +8,8 @@ import { ITEM_COLUMNS, ITEM_FROM, selectedCondition, toItemSummary, xView, type 
 import { itemUrl } from "./links.ts";
 import { hasItemPage } from "./rules.ts";
 import { SITE } from "@aihot/industry/site";
+import { publicationLabel } from "@aihot/contracts/publication-time";
+import { publicPublicationTime } from "./time.ts";
 import { researchBasisLabel, RESEARCH_CLAIMS, RESEARCH_AREAS, RESEARCH_FOCI, DOCUMENT_TYPES, EVIDENCE_STAGES, SOURCE_ORIGINS } from "@aihot/contracts/research";
 
 interface DetailRow extends ItemRow {
@@ -167,7 +169,8 @@ export async function exportMarkdown(id: string): Promise<{ filename: string; bo
   lines.push(`# ${row.title}`, "");
   if (row.original_title) lines.push(`> 原标题：${row.original_title}`, "");
   lines.push(`- 来源：${row.source_name}`);
-  lines.push(`- 发布时间：${(row.published_at ?? row.discovered_at).toISOString()}`);
+  lines.push(`- 发表时间：${publicationLabel(publicPublicationTime(row))}`);
+  lines.push(`- 本站收录时间：${row.discovered_at.toISOString()}`);
   lines.push(`- ${SITE.name}：${itemUrl(row.id)}`);
   lines.push(`- 原文：${row.url}`, "");
   if (row.research && row.channel !== "x") {

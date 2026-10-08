@@ -26,7 +26,7 @@ type Rel = "SAME_OCCURRENCE" | "SAME_STORY" | "UNRELATED";
 let relation: Rel = "SAME_OCCURRENCE";
 /** What the pair prompt answers when it differs from the batch answer. */
 let pairRelation: Rel | null = null;
-/** Answer every candidate of a batch prompt, not only the first. */
+/** Answer every candidate from the current scenario, not only the first. */
 let answerAll = false;
 const provider = await stub(async (_hit, req) => {
   asked.open();
@@ -34,10 +34,19 @@ const provider = await stub(async (_hit, req) => {
   const body = JSON.parse(req.body) as { messages: Array<{ content: string }> };
   const user = body.messages[1]!.content;
   const pair = user.includes("报道 A");
-  const ids = answerAll ? [...user.matchAll(/【候选 (C\d+)】/g)].map((m) => m[1]!) : ["C1"];
+  const candidates = [...user.matchAll(/【候选 (C\d+)】([\s\S]*?)(?=【候选 C\d+】|$)/g)];
+  const queryTitle = /^标题：(.+)$/m.exec(user)?.[1];
+  const ids = answerAll ? candidates.map((m) => m[1]!) : ["C1"];
+  // Short random tokens can share enough bigrams to recall a previous scenario.
+  // Both roots in this scenario retain the query token (with 甲 / 乙 appended).
+  // The stub must reject unrelated fixtures rather than call every recalled root the same story.
+  const sameScenario = (id: string) => {
+    const title = /^标题：(.+)$/m.exec(candidates.find((m) => m[1] === id)?.[2] ?? "")?.[1];
+    return !!queryTitle && !!title && title.startsWith(queryTitle);
+  };
   const answer = pair
     ? { a: "发布", b: "发布", relation: pairRelation ?? relation, difference: "", confidence: 0.95 }
-    : { query: "发布新模型", decisions: ids.map((id) => ({ id, relation, confidence: 0.95, note: "" })) };
+    : { query: "发布新模型", decisions: ids.map((id) => ({ id, relation: sameScenario(id) ? relation : "UNRELATED", confidence: 0.95, note: "" })) };
   return { id: "stub", choices: [{ message: { content: JSON.stringify(answer) } }], usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 } };
 });
 process.env.DEEPSEEK_BASE_URL = `${provider.url}/v1`;

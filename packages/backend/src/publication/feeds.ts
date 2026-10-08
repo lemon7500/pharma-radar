@@ -11,6 +11,8 @@ import { reportHeadline, reportIndex } from "./reports.ts";
 import { textToHtml } from "../content/sanitize.ts";
 import { categoryCondition, listedCondition, selectedCondition, xView, type ItemRow } from "./items.ts";
 import { dailyUrl, itemUrl, siteUrl } from "./links.ts";
+import { publicationLabel } from "@aihot/contracts/publication-time";
+import { publicPublicationTime } from "./time.ts";
 
 interface FeedMeta {
   id: string;
@@ -24,7 +26,7 @@ interface FeedMeta {
 const FEEDS: Record<"selected" | "selectedFull" | "all" | "daily", FeedMeta> = {
   selected: { id: "selected", path: "/feed.xml", title: `${SITE.name} — 精选`, description: `最新 50 条 ${SITE.name} 精选摘要，保留标题、站内阅读与原文入口；需要阅读器内全文可改订 /feed/full.xml。`, homePath: "/", pollHintMinutes: 30 },
   selectedFull: { id: "selected-full", path: "/feed/full.xml", title: `${SITE.name} — 精选全文`, description: "与精选摘要相同的最新 50 条；仅对明确允许再分发的来源内联正文，其余仍提供摘要和阅读入口。", homePath: "/", pollHintMinutes: 30 },
-  all: { id: "all", path: "/feed/all.xml", title: `${SITE.name} — 全部动态`, description: "最近 7 天公开动态，按真实发布时间倒序；不含未审内容、低相关条目和已合并的重复条目。", homePath: "/all", pollHintMinutes: 30 },
+  all: { id: "all", path: "/feed/all.xml", title: `${SITE.name} — 全部动态`, description: "最近 7 天公开动态，保留旧版兼容顺序；发表日期及精度见各条目，不含低相关条目和已合并的重复条目。", homePath: "/all", pollHintMinutes: 30 },
   daily: { id: "daily", path: "/feed/daily.xml", title: `${SITE.name} ${withSubject("日报")}`, description: `${SITE.name} 每天 08:00 北京时间发布的${withSubject("日报")}，保留最近 30 期。`, homePath: "/daily", pollHintMinutes: 30 },
 };
 
@@ -41,7 +43,7 @@ function rfc822(d: Date): string {
 
 function channel(meta: { title: string; description: string; homePath: string; selfPath: string; ttl: number }, items: string[]): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:dc="http://purl.org/dc/elements/1.1/">
   <channel>
     <title>${escapeXml(meta.title)}</title>
     <link>${escapeXml(siteUrl(meta.homePath))}</link>
@@ -56,7 +58,7 @@ ${items.join("\n")}
 `;
 }
 
-type FeedRow = Pick<ItemRow, "id" | "title" | "summary" | "url" | "category" | "published_at" | "discovered_at" | "source_name"> &
+type FeedRow = Pick<ItemRow, "id" | "title" | "summary" | "url" | "category" | "published_at" | "discovered_at" | "source_name" | "source_publication_time"> & { publication_date: string | null } &
   Partial<Pick<ItemRow, "channel" | "x_post" | "zh_text" | "quoted_zh" | "language" | "syndicate"> & {
     body_html: string | null; tr_html: string | null; tr_complete: boolean | null;
   }>;
@@ -84,10 +86,11 @@ function fullContent(r: FeedRow, aihot: string): string | null {
   return `${proxyBodyImages(html, true, FEED_IMAGE_SECONDS)}<p>—— 本文由 ${escapeXml(SITE.name)} 聚合整理，完整版与更多动态见 <a href="${aihot}">${aihot}</a></p>`;
 }
 
-function itemXml(r: FeedRow, includeContent: boolean): string {
+function itemXml(r: FeedRow, includeContent: boolean, now: Date): string {
   const aihot = itemUrl(r.id);
   const summary = r.summary ?? "";
-  const description = `<p>${escapeXml(summary)}</p>\n<p>🔗 <a href="${escapeXml(r.url)}">阅读原文</a></p>\n<p>via ${escapeXml(SITE.name)} · <a href="${aihot}">${aihot}</a></p>`;
+  const published = publicPublicationTime(r, now);
+  const description = `<p>${escapeXml(summary)}</p>\n<p>发表时间：${escapeXml(publicationLabel(published))}</p>\n<p>🔗 <a href="${escapeXml(r.url)}">阅读原文</a></p>\n<p>via ${escapeXml(SITE.name)} · <a href="${aihot}">${aihot}</a></p>`;
   const label = r.category ? CATEGORY_LABELS[r.category as PublicApiCategoryKey] : undefined;
   const category = label ? `\n      <category>${escapeXml(label)}</category>` : "";
   let content = "";
@@ -95,12 +98,13 @@ function itemXml(r: FeedRow, includeContent: boolean): string {
     const html = fullContent(r, aihot);
     if (html) content = `\n      <content:encoded>${cdata(html)}</content:encoded>`;
   }
-  const pub = r.published_at ?? r.discovered_at;
+  const dates = published.precision === "time" && r.published_at
+    ? `\n      <pubDate>${rfc822(r.published_at)}</pubDate>\n      <dc:date>${r.published_at.toISOString()}</dc:date>`
+    : published.date ? `\n      <dc:date>${escapeXml(published.date)}</dc:date>` : "";
   return `    <item>
       <title>${cdata(r.title)}</title>
       <link>${aihot}</link>
-      <description>${cdata(description)}</description>${content}${category}
-      <pubDate>${rfc822(pub)}</pubDate>
+      <description>${cdata(description)}</description>${content}${category}${dates}
       <guid isPermaLink="false">${escapeXml(r.id)}</guid>
       <author>${AUTHOR} (${escapeXml(r.source_name)})</author>
     </item>`;
@@ -123,11 +127,13 @@ export async function itemFeed(kind: ItemFeedKind, category: PublicApiCategoryKe
       SELECT p.article_id FROM publications p WHERE ${scope}
       ORDER BY coalesce(p.published_at, p.discovered_at) DESC, p.article_id DESC LIMIT 50
     )
-    SELECT p.article_id AS id, p.title, p.summary, p.url, p.category, p.published_at, p.discovered_at, s.name AS source_name
+    SELECT p.article_id AS id, p.title, p.summary, p.url, p.category, p.published_at, p.discovered_at, s.name AS source_name,
+      p.research->'bibliography'->>'publishedDate' AS publication_date, clock.raw->'publicationTime' AS source_publication_time
       ${includeContent ? sql`, p.channel, p.syndicate, a.language, a.x_post,
         CASE WHEN p.channel = 'x' THEN tr.body_text END AS zh_text, qt.text_zh AS quoted_zh,
         a.body_html, tr.body_html AS tr_html, tr.complete AS tr_complete` : sql``}
     FROM page JOIN publications p ON p.article_id = page.article_id JOIN sources s ON s.id = p.source_id
+    LEFT JOIN articles clock ON clock.id=p.article_id
     ${includeContent ? sql`LEFT JOIN articles a ON a.id = p.article_id AND p.syndicate
       LEFT JOIN translations tr ON tr.article_id = p.article_id AND tr.lang = 'zh' AND tr.revision >= a.revision
       LEFT JOIN quote_translations qt ON p.channel = 'x' AND qt.tweet_id = substring(a.x_post->'quoted'->>'url' from '/status/([0-9]+)')` : sql``}
@@ -148,7 +154,7 @@ export async function itemFeed(kind: ItemFeedKind, category: PublicApiCategoryKe
     const m = FEEDS[kind === "selected" ? "selected" : kind === "selected-full" ? "selectedFull" : "all"];
     meta = { title: m.title, description: m.description, homePath: m.homePath, selfPath: m.path, ttl: m.pollHintMinutes };
   }
-  return channel(meta, rows.map((r) => itemXml(r, includeContent)));
+  return channel(meta, rows.map((r) => itemXml(r, includeContent, now)));
 }
 
 export async function dailyFeed(): Promise<string> {

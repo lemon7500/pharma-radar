@@ -2,7 +2,7 @@ import { SITE, withSubject } from "@aihot/industry/site";
 import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { Presence } from "../components/ui/Presence";
-import { pageMeta } from "../lib/seo";
+import { pageMeta, siteUrl } from "../lib/seo";
 import { KEYS } from "../lib/local-state";
 import { IconCheck, IconClose, IconImage } from "../components/icons";
 import { RingMark } from "../components/Logo";
@@ -70,7 +70,9 @@ const MAX_TEXT = 2000;
 
 export default function FeedbackPage() {
   const [params] = useSearchParams();
-  const [draft, setDraft] = useState<Draft>({ content: "", email: "", pageUrl: params.get("from") ?? "" });
+  const itemId = params.get("item");
+  const initialUrl = params.get("from") ?? (itemId && /^[a-zA-Z0-9_-]{1,128}$/.test(itemId) ? `${siteUrl()}/items/${encodeURIComponent(itemId)}` : "");
+  const [draft, setDraft] = useState<Draft>({ content: "", email: "", pageUrl: initialUrl });
   const [shot, setShot] = useState<{ file: File; url: string } | null>(null);
   const [state, setState] = useState<{ kind: "idle" | "sending" | "done" | "error"; message?: string; id?: number }>({ kind: "idle" });
   const [dragging, setDragging] = useState(false);
@@ -79,7 +81,7 @@ export default function FeedbackPage() {
   useEffect(() => {
     const saved = readDraft();
     if (saved) setDraft((d) => ({ ...saved, pageUrl: d.pageUrl || saved.pageUrl }));
-    else if (!params.get("from") && document.referrer.startsWith(location.origin)) setDraft((d) => ({ ...d, pageUrl: document.referrer }));
+    else if (!initialUrl && document.referrer.startsWith(location.origin)) setDraft((d) => ({ ...d, pageUrl: document.referrer }));
   }, []);
   useEffect(() => {
     const t = setTimeout(() => writeDraft(draft.content || draft.email ? draft : null), 400);
@@ -195,6 +197,14 @@ export default function FeedbackPage() {
                 {draft.content.length} / {MAX_TEXT}
               </span>
             </div>
+          </div>
+
+          <div>
+            <label htmlFor="fb-page" className={label}>
+              相关页面 <span className="font-normal text-ink-4">（选填）</span>
+            </label>
+            <input id="fb-page" type="url" value={draft.pageUrl} onChange={(e) => setDraft({ ...draft, pageUrl: e.target.value })} placeholder="出现问题的文章或页面地址" className={`${field} h-11 px-4 text-[14.5px]`} />
+            <p className="mt-2 text-[12px] leading-relaxed text-ink-4">从资料页进入时会自动附上地址；发送前可以核对、修改或清除。</p>
           </div>
 
           <div>

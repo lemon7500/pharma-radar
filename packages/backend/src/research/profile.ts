@@ -59,17 +59,41 @@ const focusPatterns: Record<string, RegExp> = {
   "ai-pharma": /artificial intelligence|machine learning|deep learning|neural network|AI[- ](?:driven|based)|AI.?药|人工智能|机器学习|深度学习/i,
 };
 const pharmacy = /drug|pharmac|medicine|medicinal|traditional Chinese herb|bioactiv|therap|treat(?:ment|ed)|disease|cancer|anti[- ]?(?:tumou?r|inflamm|viral|bacterial)|arthritis|diabet|endometritis|药|治疗|疾病|肿瘤/i;
-const agricultural = /agrochem|herbicid|crop|weed|insecticid|plant toxicity|food preserv|食品保鲜|除草|农药/i;
+const nonPharmacyUse = /\b(?:agrochem\w*|agricultur\w*|herbicid\w*|crops?|weeds?|insecticid\w*|pesticid\w*|ecolog\w*|ecosystems?|bioremediation|plant (?:toxicity|disease|pathogens?|protection)|plants?\s+(?:treated|treatment)|treatment\s+of\s+plants?|food (?:preserv\w*|packaging|production|applications?)|seed germination|rice (?:resistance|disease|bacterial blight))\b|农业|农用|农药|除草|植物(?:毒性|病害|病原)|水稻抗病|食品(?:保鲜|防腐|加工)|生态/i;
+const pharmacyTask = /\b(?:pharmac\w*|pharmaceutical\w*|ethnopharmac\w*|toxicolog\w*|drug (?:discovery|design|development|delivery|safety|metabolism)|medicinal chemistry|pharmacokinetics|pharmacodynamics|analgesic\w*|anesthetic\w*|antidiabet\w*|antihyperglyc\w*|antidepress\w*|anticonvuls\w*|anti[- ]?(?:cancer|tumou?r|inflamm\w*|infective\w*)|(?:antimicrobial|anti[- ]?(?:bacterial|viral|fungal)) (?:drugs?|drug candidates?))\b|药物(?:发现|设计|研发|开发|递送|安全|代谢)|药理|药学|药代|制剂|毒理|镇痛|麻醉|抗(?:癌|肿瘤|炎|糖尿病|抑郁|惊厥)|抗感染药/i;
+const medicinalQuality = /(?:traditional Chinese medicine|Chinese herbal medicine|herbal medicine|medicinal plants?|中药|草药|药用植物).{0,160}(?:quality control|chemical profil\w*|quality evaluat\w*|质量(?:控制|评价)|成分分析)|(?:quality control|quality evaluat\w*|质量(?:控制|评价)).{0,160}(?:herbal|medicinal|中药|草药|药用植物)/i;
+const drugIntervention = /\b(?:drugs?|herbal (?:extracts?|medicine|preparations?)|plant extracts?)\b.{0,100}\b(?:administer\w*|intervention|treat(?:ment|ed|ing)|therap\w*)\b|\b(?:administer\w*|received|intervention|oral)\b.{0,100}\b(?:drugs?|herbal (?:extracts?|medicine|preparations?))\b|(?:给药|口服|服用).{0,60}(?:药物|中药|草药)/i;
+const backgroundUse = /\b(?:background|concomitant|rescue|prior|previous|excluded?|without|no drugs?)\b|背景|既往|排除|未给药|无药物/i;
+const taskNotPerformed = /\b(?:not|never)\s+(?:(?:yet|directly|specifically)\s+){0,2}(?:investigated|studied|evaluated|assessed|examined|tested|performed|conducted)\b|\bno\b.{0,80}\b(?:was|were)\s+(?:performed|conducted|investigated|studied|evaluated|assessed|tested)\b|未(?:研究|评估|考察|检测|开展)|不涉及药/i;
+const aiNotApplied = /\b(?:not|never)\s+(?:(?:yet|actually|directly|explicitly)\s+){0,2}(?:used|applied|implemented|trained|built|developed)\b|\b(?:no|without)\s+(?:any\s+)?(?:artificial intelligence|machine[- ]learning|deep[- ]learning|neural networks?|AI)\b|未(?:使用|应用|采用).{0,20}(?:人工智能|机器学习|深度学习)|没有应用AI/i;
 const aiTerms = /artificial intelligence|machine[- ]learning|deep[- ]learning|neural network|language model|transformer|AI[- ](?:driven|based)|人工智能|机器学习|深度学习|神经网络/i;
 const prospectOnly = /\b(?:future|prospect|outlook|potential for|could|may|might|will|promise)\b|展望|未来|有望|可能|建议/i;
+const implemented = /\b(?:we|authors|researchers|investigators|studies|study)\s+(?:(?:have|also|successfully|previously)\s+){0,2}(?:used|applied|developed|trained|evaluated|implemented|built|constructed|tested|validated)\b|\b(?:was|were|has been|have been)\s+(?:used|applied|developed|trained|evaluated|implemented|built|constructed|tested|validated)\b|(?:本研究|我们|研究者)(?:采用|使用|开发|训练|评估|构建|验证)/i;
+const biomedicalAiTask = /drug (?:discover|design|screen|develop)|virtual screening|therapeutic (?:antibodies|antibody|proteins?)|antibody drugs?|spontaneous pain|pain behavio\w*|药物|药研|虚拟筛选|治疗(?:性)?抗体|抗体药|疼痛行为/i;
+const scopeClauses = (text: string) => text.split(/[.!?。；;\n]|\b(?:but|whereas|however)\b|但是|然而/i);
+const currentTaskText = (sentence: string) => {
+  const prospective = prospectOnly.exec(sentence);
+  return prospective ? sentence.slice(0, prospective.index) : sentence;
+};
+/** A disease, patient, medicinal plant or antibacterial cue alone also occurs in agriculture. */
+export function explicitPharmacyTask(text: string): boolean {
+  return scopeClauses(text).some(sentence => {
+    // A prospective pharmacy application cannot turn a demonstrated crop/food use into a drug task.
+    const current = currentTaskText(sentence).replace(/\b(?:non[- ]pharmac\w*|drug[- ]free)\b|非药(?:物|理)|无药物/gi, "");
+    if (taskNotPerformed.test(current) || /^\s*(?:previous|prior|background|earlier)\b|^\s*(?:既往|背景)/i.test(current)) return false;
+    return pharmacyTask.test(current) || medicinalQuality.test(current) || drugIntervention.test(current) && !backgroundUse.test(current) && !nonPharmacyUse.test(current);
+  });
+}
 export function focusSupported(focus: string, quote: string, material: ResearchMaterial): boolean {
   const text = `${material.title}\n${material.bodyText || material.excerpt || ""}`;
-  if (focus === "ai-pharma") return quote.split(/[.!?。；;]/).some(sentence => aiTerms.test(sentence) && !prospectOnly.test(sentence));
+  if (focus === "ai-pharma") return !outsidePharmacy(text) && !outsidePharmacy(quote)
+    && (explicitPharmacyTask(text) || scopeClauses(text).some(sentence => biomedicalAiTask.test(currentTaskText(sentence))))
+    && scopeClauses(quote).some(sentence => aiTerms.test(sentence) && !aiNotApplied.test(sentence) && !outsidePharmacy(sentence) && (!prospectOnly.test(sentence) || implemented.test(sentence)));
   const naturalCue = /traditional Chinese|herbal|natural product|phytochem|ethnopharmac|plant|extract|granules?|decoction|isolated from|中药|天然|植物|颗粒|提取|方剂/i.test(quote);
   return naturalCue && pharmacy.test(text) && !outsidePharmacy(text);
 }
 export function outsidePharmacy(text: string): boolean {
-  return agricultural.test(text) && !/pharmac|human|patient|therap|disease|anti[- ]?(?:tumou?r|inflamm|viral|bacterial)|药理|人体|患者|疾病/i.test(text);
+  return nonPharmacyUse.test(text) && !explicitPharmacyTask(text);
 }
 const isSecondary = (b: Bibliography) => b.publicationTypes.some(t => /^(?:News|News In Brief|Research Highlight|News and Views|News & Views)$/i.test(t));
 export function baselineResearch(material: ResearchMaterial): ResearchProfile {

@@ -6,6 +6,7 @@ import { newShortId } from "../lib/ids.ts";
 import { categoryCondition, API_ITEM_COLUMNS, API_ITEM_FROM, listedCondition, selectedCondition, type ApiItemRow } from "./items.ts";
 import { publicMatchCondition, searchTerms, withSearchCapacity } from "./pool.ts";
 import { v1Payload, type V1ItemPayload } from "./publish.ts";
+import { publicPublicationTime } from "./time.ts";
 
 export interface V1ItemsQuery {
   mode: "selected" | "all";
@@ -24,11 +25,12 @@ export interface V1ItemsResult {
   page: { count: number; hasMore: boolean; nextCursor: string | null };
 }
 
-export function rowToV1(row: ApiItemRow): V1ItemPayload {
+export function rowToV1(row: ApiItemRow, now = new Date()): V1ItemPayload {
   return v1Payload({
     articleId: row.id, title: row.title, originalTitle: row.original_title, summary: row.summary, sourceName: row.source_name,
     url: row.url, publishedAt: row.published_at, discoveredAt: row.discovered_at, category: row.category,
     score: row.score === null ? null : Number(row.score), selected: row.selected, reason: row.reason,
+    publicationTime: publicPublicationTime(row, now),
   });
 }
 
@@ -67,7 +69,7 @@ export async function v1Items(query: V1ItemsQuery, now = new Date()): Promise<V1
       mode: query.mode, category: query.category, window: query.window, q: query.q, by: query.by,
       ordering: query.by === "published" ? "publishedAtDesc" : "timelineDesc",
     },
-    items: page.map(row => rowToV1({ ...row, selected: row.selected && !!row.visible_after && row.visible_after <= now })),
+    items: page.map(row => rowToV1({ ...row, selected: row.selected && !!row.visible_after && row.visible_after <= now }, now)),
     page: {
       count: page.length,
       hasMore,
@@ -108,6 +110,7 @@ export async function effectiveWatermark(now = new Date()): Promise<number> {
 function minimalOf(item: V1ItemPayload) {
   return {
     id: item.id, title: item.title, source: item.source, publishedAt: item.publishedAt, discoveredAt: item.discoveredAt,
+    ...(item.publicationTime ? { publicationTime: item.publicationTime } : {}),
     category: item.category, score: item.score, selected: item.selected, links: { aihot: item.links.aihot },
   };
 }
@@ -116,6 +119,20 @@ function minimalOf(item: V1ItemPayload) {
 // whitelist, preserving its omission of absent keys and all existing null values.
 function ledgerPayload(minimal: boolean, payload = sql`payload`) {
   return minimal ? sql`(${payload} - ARRAY['originalTitle', 'summary', 'reason', 'attribution']::text[]) #- '{links,original}'` : payload;
+}
+
+/** Old ledger entries precede the additive projection. Resolve only their date metadata, never expose raw. */
+async function withLegacyPublicationTimes(items: V1ItemPayload[], now: Date): Promise<V1ItemPayload[]> {
+  const missing = items.filter(item => !item.publicationTime);
+  if (!missing.length) return items;
+  const rows = await sql<{ id: string; publication_date: string | null; source_publication_time: unknown }[]>`
+    SELECT p.article_id AS id, p.research->'bibliography'->>'publishedDate' AS publication_date,
+      a.raw->'publicationTime' AS source_publication_time
+    FROM publications p LEFT JOIN articles a ON a.id=p.article_id WHERE p.article_id IN ${sql(missing.map(item => item.id))}`;
+  const metadata = new Map(rows.map(row => [row.id, row]));
+  return items.map(item => item.publicationTime ? item : { ...item, publicationTime: publicPublicationTime({
+    ...metadata.get(item.id), published_at: item.publishedAt ? new Date(item.publishedAt) : null,
+  }, now) });
 }
 
 export interface SnapshotQuery {
@@ -159,6 +176,7 @@ export async function selectedSnapshot(q: SnapshotQuery, now = new Date()) {
   const page = rows.slice(0, q.limit);
   const hasMore = rows.length > q.limit;
   const last = page[page.length - 1];
+  const items = await withLegacyPublicationTimes(page.map(r => r.payload), now);
   return {
     schemaVersion: 1 as const,
     asOf,
@@ -167,7 +185,7 @@ export async function selectedSnapshot(q: SnapshotQuery, now = new Date()) {
     count: page.length,
     hasMore,
     nextPage: hasMore && last ? encodeCursor(SYNC_PREFIX, { k: "page", e: epoch, w, f: fields, a: last.article_id, t: asOf }) : null,
-    items: page.map((r) => (fields === "minimal" ? minimalOf(r.payload) : r.payload)),
+    items: items.map(item => fields === "minimal" ? minimalOf(item) : item),
   };
 }
 
@@ -194,16 +212,18 @@ export async function selectedChanges(q: { cursor: string; limit: number }, now 
   const page = rows.slice(0, q.limit);
   const hasMore = rows.length > q.limit;
   const nextW = page.length ? page[page.length - 1]!.seq : Math.max(c.w, 0);
+  const hydrated = await withLegacyPublicationTimes(page.filter(r => r.op === "upsert").map(r => r.payload!), now);
+  let upsertIndex = 0;
   return {
     schemaVersion: 1 as const,
     fields: c.f,
     cursor: encodeCursor(SYNC_PREFIX, { k: "sync", e: epoch, w: nextW, f: c.f }),
     count: page.length,
     hasMore,
-    changes: page.map((r) =>
-      r.op === "remove"
-        ? { op: "remove" as const, changedAt: r.changed_at.toISOString(), id: r.article_id }
-        : { op: "upsert" as const, changedAt: r.changed_at.toISOString(), item: c.f === "minimal" ? minimalOf(r.payload!) : r.payload! },
-    ),
+    changes: page.map(r => {
+      if (r.op === "remove") return { op: "remove" as const, changedAt: r.changed_at.toISOString(), id: r.article_id };
+      const item = hydrated[upsertIndex++]!;
+      return { op: "upsert" as const, changedAt: r.changed_at.toISOString(), item: c.f === "minimal" ? minimalOf(item) : item };
+    }),
   };
 }

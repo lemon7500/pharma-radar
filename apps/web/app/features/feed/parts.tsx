@@ -69,6 +69,7 @@ export function StarButton({ item, size = 26, className = "" }: { item: Pick<Fee
           id: item.id, title: item.title, summary: item.summary, sourceName: item.source.name,
           publishedAt: item.publishedAt, score: item.score, aiSelected: item.selected,
           ...(item.publicationTime?.precision === "day" ? {publishedDate:item.publicationTime.date} : {}),
+          ...(item.publicationTime ? {publicationTime:item.publicationTime} : {}),
         });
         if (added) setPulse((p) => p + 1);
       }}

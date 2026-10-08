@@ -1,7 +1,7 @@
 // Free, conservative admission for a bibliographic index. This does not judge a
 // paper's results, assign evidence stages, or select it for recommendation.
 import type { Bibliography, ResearchProfile } from "@aihot/contracts/research";
-import { baselineResearch, materialBasis, normalizeBibliography, outsidePharmacy, type ResearchMaterial } from "../research/profile.ts";
+import { baselineResearch, explicitPharmacyTask, materialBasis, normalizeBibliography, outsidePharmacy, type ResearchMaterial } from "../research/profile.ts";
 
 export interface PreliminaryInput {
   source: { kind: string; participation_mode: string; config?: Record<string, unknown> };
@@ -33,9 +33,6 @@ export function preliminaryAdmission(input: PreliminaryInput): boolean {
   }
   if (!ownRecord) return false;
   const text = `${article.title}\n${materialBasis(material) === "insufficient" ? "" : material.bodyText || material.excerpt || ""}`;
-  const nonmedicalUse = /\b(?:crop|weed|herbicid\w*|insecticid\w*|pesticid\w*|agrochem\w*|agricultur\w*|food|ecolog\w*|plant (?:disease|pathogen|toxicity|treatment)|plants?\s+(?:treated|treatment)|treatment\s+of\s+plants?)\b|农用|农业|农药|除草|植物病害|食品|生态/i.test(text);
-  const explicitPharmacy = /\b(?:pharmac\w*|drug (?:discovery|design|development|delivery)|anti[- ]?(?:cancer|tumou?r))\b|药物研发|药理/i.test(text);
-  if (nonmedicalUse && !explicitPharmacy) return false;
   if (outsidePharmacy(text)) return false;
   // Clinical trials and traditional medicine also include non-drug treatments.
   // Early indexes require a pharmaceutical subject, rather than therapy alone.
@@ -44,7 +41,7 @@ export function preliminaryAdmission(input: PreliminaryInput): boolean {
   const pharmacologicalUse = /\b(?:therap\w*|treat(?:ment|ed|ing)|anti[- ]?(?:cancer|tumou?r|inflamm\w*|viral|bacterial)|pharmac\w*|receptors?|agonists?|antagonists?|bioactiv\w*)\b|治疗|药效|药理|抗(?:肿瘤|癌|炎|病毒|菌)|受体/i;
   const relevant = (value: string) => {
     const subject = value.replace(/\b(?:non[- ](?:pharmac\w*|drugs?)|drug[- ]free)\b|非(?:药物|药理)|无药物/gi, "");
-    return pharmacySubject.test(subject) || naturalIntervention.test(subject) && pharmacologicalUse.test(subject);
+    return explicitPharmacyTask(subject) || pharmacySubject.test(subject) || naturalIntervention.test(subject) && pharmacologicalUse.test(subject);
   };
   const backgroundOnly = /\b(?:no|not|without|exclude\w*|prior|previous|background|concomitant|rescue|history|non[- ](?:drug|pharmac\w*))\b|无药|非药物|排除|既往|背景|停用|禁用/i;
   if (relevant(article.title) && !backgroundOnly.test(article.title)) return true;

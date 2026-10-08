@@ -284,6 +284,7 @@ test("v1 story retains website content and fallback ordering without the website
   assert.equal(v1.latest, 'Latest development fallback');
   assert.deepEqual(v1.reports, site.timeline.slice(0, 50).map((r: any) => ({ id: r.id, title: r.title, summary: r.summary,
     source: { name: r.source.name, firstParty: r.source.firstParty }, publishedAt: r.publishedAt,
+    publicationTime: r.publicationTime,
     links: { aihot: `${config.siteUrl}/items/${r.id}`, original: r.originalUrl } })));
   await sql`UPDATE publications SET visible_after = now() + interval '1 day' WHERE article_id = ${second}`;
   const gated = JSON.parse((await get(`/api/v1/stories/${publicId}`)).body).story;
@@ -354,6 +355,7 @@ test("minimal sync projection preserves snapshot fields, pagination bindings and
   const full = JSON.parse((await get('/api/v1/selected/snapshot?fields=default&limit=1000')).body);
   const minimal = JSON.parse((await get('/api/v1/selected/snapshot?fields=minimal&limit=1000')).body);
   const project = (i: any) => ({ id: i.id, title: i.title, source: i.source, publishedAt: i.publishedAt,
+    ...(i.publicationTime ? { publicationTime: i.publicationTime } : {}),
     discoveredAt: i.discoveredAt, category: i.category, score: i.score, selected: i.selected, links: { aihot: i.links.aihot } });
   assert.deepEqual(minimal.items, full.items.map(project));
   assert.ok(minimal.items.some((i: any) => i.id === id));

@@ -15,11 +15,14 @@ import { normalizeBibliography, supportedStoredResearch } from "../research/prof
 import { scientificText } from "../research/material.ts";
 import { editorialResearchMaterial, effectiveResearchMaterial, withResearchMaterialSources } from "../research/editorial-material.ts";
 import type { Bibliography, ResearchProfile } from "@aihot/contracts/research";
+import type { PublicationTime } from "@aihot/contracts/publication-time";
+import { publicPublicationTime } from "./time.ts";
 import {
   bodyModeOf, channelOf, displayTags, isIndexable, isPoolEligible, isSelectable, mayRedistribute, type SourceFacts,
 } from "./rules.ts";
 
 interface ArticleRow {
+  source_publication_time?: unknown;
   processing_state: string;
   canonical_article_id: string | null;
   revision: number;
@@ -97,6 +100,8 @@ export interface V1ItemPayload {
   source: { name: string };
   links: { aihot: string; original: string };
   publishedAt: string | null;
+  /** Safe source-derived precision; historical timestamp fields remain unchanged. */
+  publicationTime?: PublicationTime;
   discoveredAt: string;
   category: string | null;
   score: number | null;
@@ -132,6 +137,7 @@ function round1(n: number | null): number | null {
 export function v1Payload(p: {
   articleId: string; title: string; originalTitle: string | null; summary: string | null; sourceName: string; url: string;
   publishedAt: Date | null; discoveredAt: Date; category: string | null; score: number | null; selected: boolean; reason: string | null;
+  publicationTime?: PublicationTime;
 }): V1ItemPayload {
   const aihot = itemUrl(p.articleId);
   return {
@@ -142,6 +148,7 @@ export function v1Payload(p: {
     source: { name: p.sourceName },
     links: { aihot, original: p.url },
     publishedAt: p.publishedAt ? p.publishedAt.toISOString() : null,
+    ...(p.publicationTime ? { publicationTime: p.publicationTime } : {}),
     discoveredAt: p.discoveredAt.toISOString(),
     category: toPublicApiCategory(p.category),
     score: p.score === null ? null : Math.round(p.score),
@@ -166,7 +173,7 @@ export async function publishArticle(articleId: string, options: PublishOptions 
 
 export async function publishArticleTx(tx: Tx, articleId: string, options: PublishOptions = {}): Promise<PublishResult | null> {
   const [article] = await tx<ArticleRow[]>`
-    SELECT id, processing_state, revision, bibliography, research_profile, research_support, research_revision, research_material_kind, canonical_article_id, source_id, url, title, language, published_at, discovered_at, timeline_at, backfill, body_status,
+    SELECT id, processing_state, revision, bibliography, research_profile, research_support, research_revision, research_material_kind, canonical_article_id, source_id, url, title, language, published_at, raw->'publicationTime' AS source_publication_time, discovered_at, timeline_at, backfill, body_status,
            coalesce(research_abstract,body_text) AS body_text, excerpt, x_post, grouped_at
     FROM articles WHERE id = ${articleId} FOR UPDATE`;
   if (!article) return null;
@@ -349,6 +356,7 @@ export async function publishArticleTx(tx: Tx, articleId: string, options: Publi
     const payload = v1Payload({
       articleId, title: next.title, originalTitle, summary, sourceName: source.name, url: article.url,
       publishedAt: article.published_at, discoveredAt: article.discovered_at, category, score: next.score, selected: true, reason,
+      publicationTime: publicPublicationTime({ ...article, research }, now),
     });
     const payloadHash = sha256(stableJson(payload));
     if (!state || !state.in_set || state.payload_hash !== payloadHash) {

@@ -5,7 +5,8 @@ import type { Route } from "./+types/story";
 import type { StoryDetail, StoryReportView } from "@aihot/contracts/site";
 import { data as routeData } from "react-router";
 import { breadcrumbLd, pageMeta, titled } from "../lib/seo";
-import { beijingDate, beijingTime, monthDayTime, relativeTime, shortSourceName } from "../lib/format";
+import { monthDayTime, relativeTime, shortSourceName } from "../lib/format";
+import { publicationTime, publicationLabel, type PublicationTime } from "@aihot/contracts/publication-time";
 import { HeatChart } from "../features/story/HeatChart";
 import { Badge, SelectedBadge } from "../components/ui/Badge";
 import { PillTabs } from "../components/ui/Tabs";
@@ -107,12 +108,17 @@ function useActiveSection(keys: SectionKey[]): [SectionKey, (k: SectionKey) => v
 }
 
 function dayLabelOf(day: string): string {
-  const [, m, d] = day.split("-").map(Number) as [number, number, number];
-  return `${m}月${d}日`;
+  if (day === "unknown") return "发表时间待确认";
+  const [y, m, d] = day.split("-").map(Number) as [number, number, number];
+  return `${y}年${m}月${d}日`;
 }
+
+const reportTime = (report: StoryReportView): PublicationTime => report.publicationTime ?? publicationTime({ publishedAt: null });
+const reportDateKey = (report:StoryReportView) => { const time=reportTime(report); return time.date ? `${time.date} ${time.time || ""}` : null; };
 
 /** One report on the story timeline: time, source and marks, title, a summary that opens on demand. */
 function TimelineRow({ r }: { r: StoryReportView }) {
+  const time = reportTime(r);
   const [open, setOpen] = useState(false);
   const [clamped, setClamped] = useState(false);
   const ref = useRef<HTMLParagraphElement>(null);
@@ -122,8 +128,10 @@ function TimelineRow({ r }: { r: StoryReportView }) {
   }, [r.summary, open]);
   return (
     <li className="grid gap-x-3 border-b border-line-soft py-4 last:border-b-0 lg:grid-cols-[48px_minmax(0,1fr)]">
-      <time dateTime={r.publishedAt} className="mono text-[12px] leading-[20px] text-ink-4">
-        {beijingTime(r.publishedAt)}
+      <time dateTime={time.date || undefined} className="mono text-[12px] leading-[20px] text-ink-4">
+        <span className="block">{time.date ? time.date.slice(5).replace("-", "/") : "待确认"}</span>
+        {time.time && <span className="block">{time.time}</span>}
+        <span className="block">发表</span>
       </time>
       <div className="min-w-0">
         <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5 text-[12px] leading-[20px] text-ink-4 lg:mt-0">
@@ -168,17 +176,24 @@ export default function StoryPage() {
   };
   const days = useMemo(() => {
     const list = story.timeline.filter((r) => (filter === "official" ? r.source.firstParty : filter === "selected" ? r.selected : true));
-    const sorted = [...list].sort((a, b) => (order === "desc" ? Date.parse(b.publishedAt) - Date.parse(a.publishedAt) : Date.parse(a.publishedAt) - Date.parse(b.publishedAt)));
+    const sorted = [...list].sort((a, b) => {
+      const at=reportTime(a),bt=reportTime(b);
+      if (!at.date || !bt.date) return at.date ? -1 : bt.date ? 1 : 0;
+      const comparison=`${at.date} ${at.time || ""}`.localeCompare(`${bt.date} ${bt.time || ""}`);
+      return order === "desc" ? -comparison : comparison;
+    });
     const out: Array<{ day: string; rows: StoryReportView[] }> = [];
     for (const r of sorted) {
-      const d = beijingDate(r.publishedAt);
+      const d = reportTime(r).date || "unknown";
       const last = out[out.length - 1];
       if (last && last.day === d) last.rows.push(r);
       else out.push({ day: d, rows: [r] });
     }
     return out;
   }, [story.timeline, filter, order]);
-  const newest = story.timeline.reduce<StoryReportView | null>((a, b) => (!a || Date.parse(b.publishedAt) > Date.parse(a.publishedAt) ? b : a), null);
+  const datedReports=story.timeline.filter(r=>reportDateKey(r)).sort((a,b)=>reportDateKey(a)!.localeCompare(reportDateKey(b)!));
+  const earliestTime=datedReports[0] ? reportTime(datedReports[0]) : publicationTime({publishedAt:null});
+  const newest=datedReports[datedReports.length-1] ?? story.timeline[0] ?? null;
   const overview = story.digest
     ? { label: "AI 综述", text: story.digest, note: story.digestUpdatedAt ? `AI 根据报道生成 · ${relativeTime(story.digestUpdatedAt)}更新` : "AI 根据报道生成" }
     : story.summary
@@ -260,7 +275,7 @@ export default function StoryPage() {
               <div className="-mx-5 mt-5 border-t border-line-soft px-5 pt-4 lg:-mx-6 lg:px-6">
                 <div className="flex items-center gap-2.5 text-[12px]">
                   <span className="font-semibold text-ink">最新进展</span>
-                  {story.latestAt && <span className="num text-ink-4">{monthDayTime(story.latestAt)}</span>}
+                  {story.latestAt && <span className="num text-ink-4">本站事件更新 · {monthDayTime(story.latestAt)}</span>}
                 </div>
                 {newest ? (
                   <Link to={`/items/${newest.id}`} className="group mt-1.5 inline text-[14px] leading-[1.7] text-ink-2 transition-colors hover:text-accent">
@@ -281,7 +296,7 @@ export default function StoryPage() {
                   <li key={d.factId} className="relative">
                     <span className={`absolute -left-5 top-[7px] size-[7px] rounded-full ring-4 ring-surface ${i === 0 ? "bg-accent" : "bg-line-strong"}`} aria-hidden="true" />
                     <div className="num text-[12px] text-ink-4">
-                      {monthDayTime(d.firstReportAt)} · {d.reportCount} 篇报道
+                      代表报道发表：{publicationLabel(reportTime(d.representative))} · {d.reportCount} 篇报道
                     </div>
                     <Link to={`/items/${d.representative.id}`} className="mt-0.5 block text-[15px] font-semibold leading-snug text-ink transition-colors hover:text-accent">
                       {d.title}
@@ -407,17 +422,17 @@ export default function StoryPage() {
           )}
           <RailCard title="事件记录" className="hidden lg:block">
             <dl className="space-y-2 text-[12.5px]">
-              {story.firstReportAt && (
+              {story.timeline.length > 0 && (
                 <div className="flex justify-between gap-3">
-                  <dt className="text-ink-4">最早报道</dt>
+                  <dt className="text-ink-4">本页报道最早发表</dt>
                   <dd className="num text-ink-2">
-                    <time dateTime={story.firstReportAt}>{monthDayTime(story.firstReportAt)}</time>
+                    <time dateTime={earliestTime.date || undefined}>{publicationLabel(earliestTime)}</time>
                   </dd>
                 </div>
               )}
               {story.latestAt && (
                 <div className="flex justify-between gap-3">
-                  <dt className="text-ink-4">最近更新</dt>
+                  <dt className="text-ink-4">本站事件更新</dt>
                   <dd className="num text-ink-2">
                     <time dateTime={story.latestAt}>{monthDayTime(story.latestAt)}</time>
                   </dd>

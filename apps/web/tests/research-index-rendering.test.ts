@@ -115,3 +115,19 @@ test("processed pending and insufficient research keep their own material scope,
   assert.ok(html.includes("研究结构待整理"));
   assert.ok(!html.includes(INDEX_CONTENT_SUMMARY));
 });
+
+test("validated publication clocks render on their own line while date-only and unknown entries never use arrival clocks", () => {
+  const cases=[
+    {date:"2026-10-01",time:"09:35",precision:"time" as const},
+    {date:"2026-10-01",time:null,precision:"day" as const},
+    {date:null,time:null,precision:"unknown" as const},
+  ];
+  for(const time of cases) {
+    const html=render(createElement(ResearchTimeline,{items:[{...item,publicationTime:time}]}));
+    if(time.time) assert.ok(html.includes('<small>09:35</small><small>发表</small>'));
+    else assert.ok(!html.includes("09:35"));
+    assert.ok(!html.includes("08:30"),"discovery clock must not enter publication display");
+    if(time.date) assert.match(html,/[dD]ate[tT]ime="2026-10-01"[^>]*>10\/01<\/time>/);
+    else assert.ok(html.includes("发表时间待确认"));
+  }
+});

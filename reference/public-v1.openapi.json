@@ -2549,7 +2549,8 @@
               "string",
               "null"
             ],
-            "format": "date-time"
+            "format": "date-time",
+            "description": "Historical accepted source timestamp, retained for compatibility. For truthful display and source precision use publicationTime."
           },
           "discoveredAt": {
             "type": "string",
@@ -2585,6 +2586,9 @@
           },
           "attribution": {
             "$ref": "#/components/schemas/Attribution"
+          },
+          "publicationTime": {
+            "$ref": "#/components/schemas/PublicationTime"
           }
         }
       },
@@ -2636,7 +2640,8 @@
               "string",
               "null"
             ],
-            "format": "date-time"
+            "format": "date-time",
+            "description": "Historical accepted source timestamp, retained for compatibility. For truthful display and source precision use publicationTime."
           },
           "discoveredAt": {
             "type": "string",
@@ -2662,6 +2667,9 @@
           },
           "selected": {
             "type": "boolean"
+          },
+          "publicationTime": {
+            "$ref": "#/components/schemas/PublicationTime"
           }
         }
       },
@@ -2919,7 +2927,8 @@
           },
           "publishedAt": {
             "type": "string",
-            "format": "date-time"
+            "format": "date-time",
+            "description": "Legacy story chronology timestamp; may use discovery when publication was unavailable. Retained for compatible sorting. Display publicationTime instead."
           },
           "links": {
             "type": "object",
@@ -2936,6 +2945,9 @@
                 "format": "uri"
               }
             }
+          },
+          "publicationTime": {
+            "$ref": "#/components/schemas/PublicationTime"
           }
         }
       },
@@ -3562,6 +3574,39 @@
             }
           }
         ]
+      },
+      "PublicationTime": {
+        "type": "object",
+        "required": [
+          "date",
+          "time",
+          "precision"
+        ],
+        "description": "Validated publication display metadata. Dates are source calendar dates; clocks are Beijing time (UTC+08:00) and appear only when verified against original source precision. Unknown publication is never replaced by discovery. Private source evidence is omitted.",
+        "properties": {
+          "date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "time": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-2][0-9]:[0-5][0-9]$"
+          },
+          "precision": {
+            "type": "string",
+            "enum": [
+              "day",
+              "time",
+              "unknown"
+            ]
+          }
+        }
       }
     }
   }

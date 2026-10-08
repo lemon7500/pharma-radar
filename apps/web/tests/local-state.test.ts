@@ -66,3 +66,31 @@ test("valid dates and existing bookmarks survive import unchanged", async () => 
   assert.equal(saved!.savedAt, item.savedAt);
   assert.equal(saved!.publishedAt, item.publishedAt);
 });
+
+test("direct bookmarks retain safe clock snapshots and export them without changing local data version", async () => {
+  const {state}=await reader();
+  const time={date:"2026-10-01",time:"09:35",precision:"time" as const};
+  state.toggleStar({id:"clock",title:"Source record",summary:null,sourceName:"Source",publishedAt:"2026-10-01T01:35:00Z",publicationTime:time,score:null,aiSelected:false});
+  assert.deepEqual(state.getStarred()[0]!.publicationTime,time);
+  const bundle=state.exportBundle();
+  assert.equal(bundle.version,1); assert.equal(state.KEYS.starred,"aihot-starred-items");
+  assert.deepEqual(bundle.starred[0]!.publicationTime,time);
+});
+
+test("imported clock declarations are downgraded while unknown and invalid precision never become source clocks", async () => {
+  const {state}=await reader();
+  const records=[
+    {id:"declared",publicationTime:{date:"2026-10-01",time:"09:35",precision:"time",privateEvidence:"PRIVATE"}},
+    {id:"unknown",publicationTime:{date:null,time:null,precision:"unknown"}},
+    {id:"false-unknown",publicationTime:{date:"2026-10-01",time:"09:35",precision:"unknown"}},
+    {id:"bad-clock",publicationTime:{date:"2026-10-01",time:"25:35",precision:"time"}},
+    {id:"bad-day",publicationTime:{date:"2026-02-30",time:"09:35",precision:"time"}},
+  ].map(v=>({...v,title:v.id,savedAt:"2026-10-02T12:00:00Z",publishedAt:"2026-10-01T01:35:00Z"}));
+  const report=state.importBundle(JSON.stringify({version:1,starred:records}));
+  assert.equal(report.starredAdded,5);
+  const saved=state.getStarred();
+  assert.deepEqual(saved.find(v=>v.id==="declared")!.publicationTime,{date:"2026-10-01",time:null,precision:"day"});
+  assert.deepEqual(saved.find(v=>v.id==="unknown")!.publicationTime,{date:null,time:null,precision:"unknown"});
+  for(const id of ["false-unknown","bad-clock","bad-day"]) assert.equal(saved.find(v=>v.id===id)!.publicationTime,undefined);
+  assert.doesNotMatch(JSON.stringify(state.exportBundle()),/PRIVATE|privateEvidence/);
+});
