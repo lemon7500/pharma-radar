@@ -57,6 +57,8 @@ jobs:
         run: npm run typecheck
       - name: Editorial reference integrity
         run: node scripts/check-editorial-reference.mjs
+      - name: Independent scheduler tests
+        run: node --test deploy/scheduler/worker.test.mjs
       - name: Build web
         run: npm run build -w @aihot/web
       - name: Web tests

@@ -3,6 +3,12 @@ on:
   schedule:
     - cron: '17 * * * *'
   workflow_dispatch:
+    inputs:
+      trigger_source:
+        description: 'Trigger origin (does not change collection or model budgets)'
+        type: choice
+        default: manual
+        options: [manual, cloudflare]
 permissions:
   contents: read
 concurrency:
@@ -37,6 +43,8 @@ jobs:
       ANALYZE_CONCURRENCY: '2'
       FETCH_CONCURRENCY: '2'
       BATCH_MAX_MINUTES: '20'
+      BATCH_MIN_INTERVAL_MINUTES: '55'
+      BATCH_TRIGGER_SOURCE: ${{ github.event_name == 'schedule' && 'schedule' || inputs.trigger_source || 'manual' }}
       RESEARCH_BACKFILL_ENABLED: ${{ vars.RESEARCH_BACKFILL_ENABLED }}
       RESEARCH_BACKFILL_LIMIT: '20'
       JOB_RETENTION_SECONDS: '86400'
@@ -49,4 +57,9 @@ jobs:
           cache: npm
       - run: npm ci --no-audit --no-fund
       - run: node scripts/migrate.ts
-      - run: node deploy/batch-worker.ts
+      - name: Admit collection batch
+        id: admission
+        run: node deploy/admit-batch.ts
+      - name: Process due sources and queued work
+        if: steps.admission.outputs.admitted == 'true'
+        run: node deploy/batch-worker.ts
