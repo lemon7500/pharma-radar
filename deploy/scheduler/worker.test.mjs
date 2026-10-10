@@ -144,6 +144,8 @@ test('dispatch accepts HTTP 204 and supplies the Cloudflare workflow input', asy
   const h = harness();
   assert.deepEqual(await h.check(), { scheduler: 'pharma-collection', reason: 'dispatched' });
   assert.equal(h.dispatches().length, 1);
+  assert.deepEqual(h.requests.filter(({ url }) => url.searchParams.has('status')).map(({ url }) => url.searchParams.get('status')).sort(), [...ACTIVE].sort());
+  assert.equal(h.requests.at(-1).options.method, 'POST', 'All active checks must precede dispatch');
   const { url, options } = h.dispatches()[0];
   assert.equal(url.pathname, `${WORKFLOW}/dispatches`);
   assert.equal(options.headers['Content-Type'], 'application/json');
@@ -162,7 +164,7 @@ for (const status of ACTIVE) {
     assert.deepEqual(await h.check(), { scheduler: 'pharma-collection', reason: 'active_run', runId: 21 });
     assert.equal(h.dispatches().length, 0);
     assert.deepEqual(h.requests.filter(({ url }) => url.searchParams.has('status')).map(({ url }) => url.searchParams.get('status')).sort(), [...ACTIVE].sort());
-    assert.equal(h.requests.length, 7);
+    assert.equal(h.requests.length, 8);
   });
 }
 
@@ -170,7 +172,7 @@ test('stale active run fails closed without adding queued work', async () => {
   const h = harness({ active: { queued: [run({ status: 'queued', age: 120 })] } });
   await rejectsWith(h, 'stale_active_run');
   assert.equal(h.dispatches().length, 0);
-  assert.equal(h.requests.length, 7);
+  assert.equal(h.requests.length, 8);
 });
 
 test('historical response uses a creation window without filtering active queries', async () => {
@@ -184,7 +186,7 @@ test('historical response uses a creation window without filtering active querie
 test('old queued work remains visible outside the historical creation window', async () => {
   const h = harness({ active: { queued: [run({ status: 'queued', age: 240 })] } });
   await rejectsWith(h, 'stale_active_run');
-  assert.equal(h.requests.length, 7);
+  assert.equal(h.requests.length, 8);
   assert.equal(h.dispatches().length, 0);
 });
 
@@ -218,6 +220,25 @@ test('active run appearing in recent results suppresses dispatch', async () => {
 test('actual collection step suppresses dispatch even when the run failed', async () => {
   const h = harness({ recent: [run({ conclusion: 'failure' })], jobData: new Map([[21, jobs(21, { conclusion: 'failure', age: 10 })]]) });
   assert.deepEqual(await h.check(), { scheduler: 'pharma-collection', reason: 'recent_collection', runId: 21 });
+  assert.equal(h.dispatches().length, 0);
+  assert.equal(h.requests.length, 4);
+  assert.equal(h.requests.some(({ url }) => url.searchParams.has('status')), false);
+});
+
+test('recent collection safely suppresses dispatch without querying an old queued run yet', async () => {
+  const h = harness({
+    recent: [run()], active: { queued: [run({ id: 22, status: 'queued', age: 240 })] },
+    jobData: new Map([[21, jobs(21)]]),
+  });
+  assert.equal((await h.check()).reason, 'recent_collection');
+  assert.equal(h.requests.length, 4);
+  assert.equal(h.dispatches().length, 0);
+});
+
+test('a stale active run in the recent history fails closed before dispatch', async () => {
+  const h = harness({ recent: [run({ status: 'queued', age: 200 })] });
+  await rejectsWith(h, 'stale_active_run');
+  assert.equal(h.requests.length, 3);
   assert.equal(h.dispatches().length, 0);
 });
 

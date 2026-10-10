@@ -217,9 +217,28 @@ export async function checkCollection(env, { fetchImpl = fetch, now = Date.now()
     if (!isObject(variable) || variable.name !== 'COLLECT_ENABLED' || !['true', 'false'].includes(variable.value)) fail('invalid_collection_flag');
     if (variable.value !== 'true') return record('collection_disabled');
 
-    // Filtered queries find even an old queued run outside the recent page.
-    // Read/dispatch is not atomic; workflow concurrency and the database gate
-    // enforce admission if a GitHub schedule starts during this check.
+    // Bound the large historical JSON response to keep Free-plan CPU small.
+    // Active queries below stay unbounded by creation date. Exceptionally old
+    // queued runs that completed recently can fall outside this heuristic;
+    // workflow concurrency and the database gate still prevent extra work.
+    const createdSince = encodeURIComponent(`>=${new Date(now - HISTORY_CREATION_WINDOW_MS).toISOString()}`);
+    const recentData = await github(fetchImpl, config.token, `${workflowPath}/runs?branch=${REF}&per_page=${RECENT_RUN_LIMIT}&created=${createdSince}`);
+    const runs = validateRunList(recentData, workflow.id, now, RECENT_RUN_LIMIT);
+    for (const run of runs) {
+      if (run.status !== 'completed') {
+        if (now - run.activityTime >= STALE_ACTIVE_MS) fail('stale_active_run');
+        return record('active_run', { runId: run.id });
+      }
+      if (run.conclusion === 'action_required') fail('workflow_action_required');
+      if (run.conclusion === 'skipped' || now - run.activityTime >= LOOKBACK_MS) continue;
+      const jobs = await github(fetchImpl, config.token, `${repositoryPath}/actions/runs/${run.id}/jobs?filter=latest&per_page=10`);
+      const admittedAt = admittedStepTime(jobs, run, now);
+      if (admittedAt !== null && now - admittedAt < MIN_INTERVAL_MS) return record('recent_collection', { runId: run.id });
+    }
+    // Only a due invocation needs all five active-state reads. A recent batch
+    // already suppresses dispatch; deferring these reads saves Free-plan CPU.
+    // Before any POST (or dry-run due), find even old queued runs outside the
+    // history window. Concurrency and DB admission protect the remaining race.
     const activeLists = await Promise.all(ACTIVE_STATUSES.map(async status => {
       const data = await github(fetchImpl, config.token, `${workflowPath}/runs?branch=${REF}&status=${status}&per_page=1`);
       const runs = validateRunList(data, workflow.id, now, 1);
@@ -230,21 +249,6 @@ export async function checkCollection(env, { fetchImpl = fetch, now = Date.now()
     if (active) {
       if (now - active.activityTime >= STALE_ACTIVE_MS) fail('stale_active_run');
       return record('active_run', { runId: active.id });
-    }
-    // Bound the large historical JSON response to keep Free-plan CPU small.
-    // Active queries above stay unbounded by creation date. Exceptionally old
-    // queued runs that completed recently can fall outside this heuristic;
-    // workflow concurrency and the database gate still prevent extra work.
-    const createdSince = encodeURIComponent(`>=${new Date(now - HISTORY_CREATION_WINDOW_MS).toISOString()}`);
-    const recentData = await github(fetchImpl, config.token, `${workflowPath}/runs?branch=${REF}&per_page=${RECENT_RUN_LIMIT}&created=${createdSince}`);
-    const runs = validateRunList(recentData, workflow.id, now, RECENT_RUN_LIMIT);
-    for (const run of runs) {
-      if (run.status !== 'completed') return record('active_run', { runId: run.id });
-      if (run.conclusion === 'action_required') fail('workflow_action_required');
-      if (run.conclusion === 'skipped' || now - run.activityTime >= LOOKBACK_MS) continue;
-      const jobs = await github(fetchImpl, config.token, `${repositoryPath}/actions/runs/${run.id}/jobs?filter=latest&per_page=10`);
-      const admittedAt = admittedStepTime(jobs, run, now);
-      if (admittedAt !== null && now - admittedAt < MIN_INTERVAL_MS) return record('recent_collection', { runId: run.id });
     }
     if (config.dryRun) return record('dry_run_due');
     const result = await github(fetchImpl, config.token, `${workflowPath}/dispatches`, { method: 'POST', body: { ref: REF, inputs: { trigger_source: 'cloudflare' } } });

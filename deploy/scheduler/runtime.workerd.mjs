@@ -26,9 +26,13 @@ const expectedReads = [
   `${workflow}/runs?branch=main&per_page=10`,
 ];
 
-async function runtime(t, { enabled = true, dryRun = true, redirectAt, redirectStatus } = {}) {
+async function runtime(t, { enabled = true, dryRun = true, redirectAt, redirectStatus, recentCollection = false } = {}) {
   const calls = [];
   const unexpected = [];
+  const recentRunId = 91;
+  const startedAt = new Date(Date.now() - 15 * 60_000).toISOString();
+  const processedAt = new Date(Date.now() - 10 * 60_000).toISOString();
+  const recentJobs = `${repository}/actions/runs/${recentRunId}/jobs?filter=latest&per_page=10`;
   // The outbound override intercepts every fetch. Nothing falls through to the
   // network, including a mistakenly followed redirect or an unexpected target.
   const outboundService = async request => {
@@ -56,10 +60,24 @@ async function runtime(t, { enabled = true, dryRun = true, redirectAt, redirectS
     };
     if (url.origin !== apiOrigin) return reject('origin');
     if (request.headers.get('authorization') !== `Bearer ${token}`) return reject('authorization');
+    if (recentCollection && request.method === 'GET' && path === recentJobs) {
+      return Response.json({ total_count: 1, jobs: [{ id: 31, run_id: recentRunId, steps: [{
+        name: 'Process due sources and queued work', number: 4,
+        status: 'completed', conclusion: 'success', started_at: processedAt,
+      }] }] });
+    }
     if (request.method === 'GET' && expectedReads.includes(path)) {
       if (redirectAt === 'GET') return new Response(null, { status: redirectStatus, headers: { Location: 'https://invalid.invalid/must-not-follow' } });
       if (path === workflow) return Response.json({ id: 77, path: '.github/workflows/pharma-collect.yml', state: 'active' });
       if (path === `${repository}/actions/variables/COLLECT_ENABLED`) return Response.json({ name: 'COLLECT_ENABLED', value: 'true' });
+      if (recentCollection && path === `${workflow}/runs?branch=main&per_page=10`) {
+        return Response.json({ total_count: 1, workflow_runs: [{
+          id: recentRunId, workflow_id: 77, head_branch: 'main',
+          repository: { full_name: 'lemon7500/pharma-radar' },
+          status: 'completed', conclusion: 'success',
+          created_at: startedAt, run_started_at: startedAt,
+        }] });
+      }
       return Response.json({ total_count: 0, workflow_runs: [] });
     }
     if (request.method === 'POST' && path === `${workflow}/dispatches`) {
@@ -123,6 +141,21 @@ test('workerd: enabled run dispatches exactly once to the local mock', async t =
   assertReads(probe.calls);
   assert.equal(probe.calls.length, 9);
   assert.deepEqual(probe.calls.filter(call => call.method === 'POST'), [{ method: 'POST', origin: apiOrigin, path: `${workflow}/dispatches` }]);
+});
+
+test('workerd: recent actual collection returns after four reads without active checks or dispatch', async t => {
+  const probe = await runtime(t, { dryRun: false, recentCollection: true });
+  const response = await probe.scheduled();
+  assert.equal(response.status, 200);
+  assert.equal(await response.text(), 'ok');
+  assert.deepEqual(probe.calls, [
+    { method: 'GET', origin: apiOrigin, path: workflow },
+    { method: 'GET', origin: apiOrigin, path: `${repository}/actions/variables/COLLECT_ENABLED` },
+    { method: 'GET', origin: apiOrigin, path: `${workflow}/runs?branch=main&per_page=10` },
+    { method: 'GET', origin: apiOrigin, path: `${repository}/actions/runs/91/jobs?filter=latest&per_page=10` },
+  ]);
+  assert.equal(probe.calls.some(call => new URL(call.path, apiOrigin).searchParams.has('status')), false);
+  assert.equal(probe.calls.filter(call => call.method === 'POST').length, 0);
 });
 
 for (const redirectStatus of [301, 302, 303, 307, 308]) {
