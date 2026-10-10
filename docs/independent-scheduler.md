@@ -14,6 +14,8 @@ The recent-run check inspects the named `Process due sources and queued work` st
 
 All requests use a fixed repository, workflow, ref and `api.github.com` origin, refuse redirects and have bounded response sizes/timeouts. Uncertain dispatch outcomes are not retried in the same invocation. Failures expose a static reason, never response bodies, tokens or original error messages. No HTTP request can dispatch a workflow; `workers.dev` and preview URLs are disabled.
 
+Requests use `redirect: 'manual'`: the Workers runtime rejects the `error` mode supported by Node/browser fetch. Every non-success status, including all 3xx responses from reads or dispatches, is rejected without following `Location` or forwarding credentials. Validate this in actual workerd as well as Node mocks; a Node-only pass does not prove edge-runtime compatibility.
+
 ## Account and credential
 
 Use Workers Free. The trigger needs no custom domain, database, KV, R2 or paid plan. The [official pricing](https://developers.cloudflare.com/workers/platform/pricing/) includes 100,000 requests/day and 10 ms CPU/invocation. The [registration page](https://workers.cloudflare.com/) states no credit card is required. About 2,160 checks/month are planned, with a few small GitHub API calls each. Validate real CPU and Cron outcomes after deployment; free plans and schedulers do not provide exact execution guarantees.
@@ -30,7 +32,7 @@ Actions permission also covers other workflows and logs in the selected reposito
 
 The committed configuration defaults to **disabled and dry-run**. Account authorization is a necessary human step. The operator then:
 
-1. Runs `node --test deploy/scheduler/*.test.mjs`, the admission database tests and type checks. GitHub CI runs the scheduler tests as well as normal checks.
+1. Runs `node --test deploy/scheduler/worker.test.mjs`, the admission database tests and type checks. Also runs `node --test deploy/scheduler/runtime.workerd.mjs` with `MINIFLARE_PACKAGE_PATH` set to the absolute directory of Miniflare `5.20261006.1-alpha`. This executes the production module in workerd, with every outgoing request intercepted by a local mock. GitHub CI installs that pinned tool under `RUNNER_TEMP`, outside application dependencies, and runs both scheduler suites as well as normal checks.
 2. Publishes the workflow admission step before enabling Cloudflare.
 3. Uses the official Wrangler CLI with `deploy/scheduler/wrangler.jsonc`; validates via `deploy --dry-run --no-bundle` first.
 4. Deploys with the dedicated `GITHUB_TOKEN` Secret and overrides `ENABLE=true`, `DRY_RUN=true`. No request is dispatched in this mode. Verify GitHub permissions and Cron logs.

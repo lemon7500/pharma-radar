@@ -109,7 +109,10 @@ async function github(fetchImpl, token, path, { method = 'GET', body } = {}) {
     try {
       response = await fetchImpl(url.href, {
         method,
-        redirect: 'error',
+        // workerd supports manual/follow, not the browser's "error" mode.
+        // Keep redirects manual; status validation below rejects every 3xx
+        // without making a second request or forwarding Authorization.
+        redirect: 'manual',
         signal: controller.signal,
         headers: {
           Authorization: `Bearer ${token}`,

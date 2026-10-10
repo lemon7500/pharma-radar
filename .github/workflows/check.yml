@@ -59,6 +59,13 @@ jobs:
         run: node scripts/check-editorial-reference.mjs
       - name: Independent scheduler tests
         run: node --test deploy/scheduler/worker.test.mjs
+      - name: Install isolated workerd test tool
+        # Keep this exact runtime outside the application and production lockfile.
+        run: npm install --prefix "$RUNNER_TEMP/pharma-workerd-tool" --no-save --ignore-scripts --no-audit --no-fund miniflare@5.20261006.1-alpha
+      - name: Independent scheduler workerd contract
+        env:
+          MINIFLARE_PACKAGE_PATH: ${{ runner.temp }}/pharma-workerd-tool/node_modules/miniflare
+        run: node --test deploy/scheduler/runtime.workerd.mjs
       - name: Build web
         run: npm run build -w @aihot/web
       - name: Web tests

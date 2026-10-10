@@ -53,7 +53,7 @@ function harness({ active = {}, recent = [], jobData = new Map(), override, disp
     const request = { url, options };
     requests.push(request);
     assert.equal(url.origin, 'https://api.github.com');
-    assert.equal(options.redirect, 'error');
+    assert.equal(options.redirect, 'manual');
     assert.equal(options.headers.Authorization, `Bearer ${TOKEN}`);
     assert.equal(options.headers['X-GitHub-Api-Version'], '2022-11-28');
     assert.ok(options.signal instanceof AbortSignal);
@@ -280,7 +280,7 @@ test('authentication, permission, rate limit and missing resources fail closed',
 });
 
 test('redirects are rejected without following another origin', async t => {
-  for (const status of [301, 302, 307, 308]) {
+  for (const status of [300, 301, 302, 303, 304, 307, 308, 399]) {
     await t.test(String(status), async () => {
       const h = harness({ override: () => new Response(null, { status, headers: { Location: 'https://attacker.invalid/steal' } }) });
       await rejectsWith(h, 'github_request_rejected');
@@ -293,6 +293,17 @@ test('redirects are rejected without following another origin', async t => {
     await rejectsWith(h, 'github_network_error');
     assert.equal(h.requests.length, 1);
   });
+});
+
+test('dispatch rejects every redirect family without following or replaying', async t => {
+  for (const status of [300, 301, 302, 303, 304, 307, 308, 399]) {
+    await t.test(String(status), async () => {
+      const h = harness({ dispatch: () => new Response(null, { status, headers: { Location: 'https://attacker.invalid/steal' } }) });
+      await rejectsWith(h, 'github_dispatch_rejected');
+      assert.equal(h.dispatches().length, 1);
+      assert.equal(h.requests.length, 9);
+    });
+  }
 });
 
 test('uncertain dispatch results are never replayed and do not leak errors', async t => {
