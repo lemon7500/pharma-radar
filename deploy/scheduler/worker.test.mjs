@@ -78,6 +78,7 @@ function harness({ active = {}, recent = [], jobData = new Map(), override, disp
     assert.equal(url.origin, 'https://api.github.com');
     assert.equal(options.redirect, 'manual');
     assert.equal(options.headers.Authorization, `Bearer ${TOKEN}`);
+    assert.equal(options.headers['Accept-Encoding'], 'identity');
     assert.equal(options.headers['X-GitHub-Api-Version'], '2022-11-28');
     assert.ok(options.signal instanceof AbortSignal);
     if (override) {

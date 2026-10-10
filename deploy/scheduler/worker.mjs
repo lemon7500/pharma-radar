@@ -220,6 +220,9 @@ export async function checkCollection(env, { fetchImpl = fetch, now = Date.now()
     const headers = {
       Authorization: `Bearer ${config.token}`,
       Accept: 'application/vnd.github+json',
+      // Reading compressed JSON makes workerd decompress it before validation.
+      // Request identity encoding; the same byte limit and strict decoder apply.
+      'Accept-Encoding': 'identity',
       'X-GitHub-Api-Version': API_VERSION,
       'User-Agent': 'pharma-radar-collection-scheduler',
     };

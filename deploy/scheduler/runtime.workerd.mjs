@@ -60,6 +60,7 @@ async function runtime(t, { enabled = true, dryRun = true, redirectAt, redirectS
     };
     if (url.origin !== apiOrigin) return reject('origin');
     if (request.headers.get('authorization') !== `Bearer ${token}`) return reject('authorization');
+    if (request.headers.get('accept-encoding') !== 'identity') return reject('accept-encoding');
     if (recentCollection && request.method === 'GET' && path === recentJobs) {
       return Response.json({ total_count: 1, jobs: [{ id: 31, run_id: recentRunId, steps: [{
         name: 'Process due sources and queued work', number: 4,
