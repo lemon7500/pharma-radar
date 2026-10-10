@@ -9,6 +9,7 @@ const BASE = `/repos/${REPOSITORY}`;
 const WORKFLOW = `${BASE}/actions/workflows/pharma-collect.yml`;
 const STEP = 'Process due sources and queued work';
 const ACTIVE = ['queued', 'in_progress', 'waiting', 'requested', 'pending'];
+const JSON_BYTE_LIMIT = 128 * 1024;
 const ENV = { ENABLE: 'true', DRY_RUN: 'false', GITHUB_TOKEN: TOKEN };
 
 function iso(minutesAgo) {
@@ -42,6 +43,28 @@ function jobs(runId, { name = STEP, status = 'completed', conclusion = 'success'
 
 function json(body, status = 200, headers = {}) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', ...headers } });
+}
+
+function workflowBytes(size) {
+  const bytes = new TextEncoder().encode(JSON.stringify({
+    id: 7, path: '.github/workflows/pharma-collect.yml', state: 'active', description: '药学😀',
+  }));
+  if (size === undefined) return bytes;
+  assert.ok(size >= bytes.byteLength);
+  const padded = new Uint8Array(size).fill(0x20);
+  padded.set(bytes);
+  return padded;
+}
+
+function chunkedResponse(chunks, { headers = {}, cancel } = {}) {
+  let index = 0;
+  return new Response(new ReadableStream({
+    pull(controller) {
+      if (index < chunks.length) controller.enqueue(chunks[index++]);
+      else controller.close();
+    },
+    ...(cancel === undefined ? {} : { cancel }),
+  }, { highWaterMark: 0 }), { status: 200, headers });
 }
 
 // Every request is answered locally. Unexpected targets throw before any I/O.
@@ -401,6 +424,106 @@ test('response byte limit is 128 KiB for declared and streaming lengths', async 
   await t.test('invalid declared length fails closed', async () => {
     const h = harness({ override: () => json({}, 200, { 'Content-Length': '-1' }) });
     await rejectsWith(h, 'github_response_too_large');
+  });
+});
+
+test('single streamed JSON chunk respects a view with a nonzero byte offset', async () => {
+  const bytes = workflowBytes();
+  const backing = new Uint8Array(bytes.byteLength + 10).fill(0xff);
+  backing.set(bytes, 5);
+  const chunk = backing.subarray(5, 5 + bytes.byteLength);
+  assert.equal(chunk.byteOffset, 5);
+  const h = harness({ override: ({ url }) => url.pathname === WORKFLOW ? chunkedResponse([chunk]) : undefined });
+  assert.equal((await h.check()).reason, 'dispatched');
+  assert.equal(h.dispatches().length, 1);
+});
+
+test('JSON response decodes multibyte UTF-8 characters split across chunks', async () => {
+  const bytes = workflowBytes();
+  const chinese = bytes.indexOf(0xe8);
+  const emoji = bytes.indexOf(0xf0);
+  assert.ok(chinese > 0 && emoji > chinese);
+  const boundaries = [0, chinese + 1, chinese + 2, emoji + 1, emoji + 3, bytes.byteLength];
+  const chunks = boundaries.slice(1).map((end, index) => bytes.subarray(boundaries[index], end));
+  const h = harness({ override: ({ url }) => url.pathname === WORKFLOW ? chunkedResponse(chunks) : undefined });
+  assert.equal((await h.check()).reason, 'dispatched');
+  assert.equal(h.dispatches().length, 1);
+});
+
+test('streamed byte limit uses all chunks despite a misleading Content-Length', async t => {
+  await t.test('exact limit accepts a multi-chunk UTF-8 body with an understated length', async () => {
+    const bytes = workflowBytes(JSON_BYTE_LIMIT);
+    const h = harness({ override: ({ url }) => url.pathname === WORKFLOW
+      ? chunkedResponse([bytes.subarray(0, 65_536), bytes.subarray(65_536)], { headers: { 'Content-Length': '1' } })
+      : undefined });
+    assert.equal((await h.check()).reason, 'dispatched');
+    assert.equal(h.dispatches().length, 1);
+  });
+  await t.test('one extra byte in a later chunk rejects and cancels the stream', async () => {
+    const bytes = workflowBytes(JSON_BYTE_LIMIT);
+    let cancellations = 0;
+    const h = harness({ override: () => chunkedResponse([bytes, new Uint8Array([0x20])], {
+      headers: { 'Content-Length': String(JSON_BYTE_LIMIT) },
+      cancel() { cancellations++; },
+    }) });
+    await rejectsWith(h, 'github_response_too_large');
+    assert.equal(cancellations, 1);
+    assert.equal(h.requests.length, 1);
+    assert.equal(h.dispatches().length, 0);
+  });
+});
+
+test('non-decimal Content-Length values fail before acquiring the body reader', async t => {
+  for (const value of ['', '+1', '1.5', '1e5', 'NaN', '1, 2']) {
+    await t.test(JSON.stringify(value), async () => {
+      let readerAcquisitions = 0;
+      const h = harness({ override: () => ({
+        status: 200,
+        headers: new Headers({ 'Content-Length': value }),
+        body: { getReader() { readerAcquisitions++; throw new Error(`private reader error ${TOKEN}`); } },
+      }) });
+      await rejectsWith(h, 'github_response_too_large');
+      assert.equal(readerAcquisitions, 0);
+      assert.equal(h.requests.length, 1);
+      assert.equal(h.dispatches().length, 0);
+    });
+  }
+});
+
+test('invalid UTF-8 leaves the shared decoder usable for the next check', async () => {
+  const invalid = harness({ override: () => chunkedResponse([new Uint8Array([0xe8, 0x8d])]) });
+  await rejectsWith(invalid, 'invalid_github_json');
+  assert.equal(invalid.dispatches().length, 0);
+  const valid = harness({ override: ({ url }) => url.pathname === WORKFLOW ? chunkedResponse([workflowBytes()]) : undefined });
+  assert.equal((await valid.check()).reason, 'dispatched');
+  assert.equal(valid.dispatches().length, 1);
+});
+
+test('stream read and cancel failures fail closed without exposing transport errors', async t => {
+  await t.test('read rejects after an initial chunk', async () => {
+    let reads = 0;
+    const h = harness({ override: () => new Response(new ReadableStream({
+      pull(controller) {
+        if (reads++ === 0) controller.enqueue(workflowBytes().subarray(0, 10));
+        else throw new Error(`private read error ${TOKEN}`);
+      },
+    }, { highWaterMark: 0 }), { status: 200 }) });
+    await rejectsWith(h, 'github_response_unavailable');
+    assert.equal(reads, 2);
+    assert.equal(h.requests.length, 1);
+    assert.equal(h.dispatches().length, 0);
+    assert.equal(JSON.stringify(h.logs).includes(TOKEN), false);
+  });
+  await t.test('cancel rejects after the body exceeds the limit', async () => {
+    let cancellations = 0;
+    const h = harness({ override: () => chunkedResponse([workflowBytes(JSON_BYTE_LIMIT + 1)], {
+      cancel() { cancellations++; throw new Error(`private cancel error ${TOKEN}`); },
+    }) });
+    await rejectsWith(h, 'github_response_unavailable');
+    assert.equal(cancellations, 1);
+    assert.equal(h.requests.length, 1);
+    assert.equal(h.dispatches().length, 0);
+    assert.equal(JSON.stringify(h.logs).includes(TOKEN), false);
   });
 });
 

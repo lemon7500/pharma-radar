@@ -16,6 +16,9 @@ const HISTORY_CREATION_WINDOW_MS = LOOKBACK_MS + STALE_ACTIVE_MS;
 const REQUEST_TIMEOUT_MS = 8_000;
 const MAX_JSON_BYTES = 128 * 1024;
 const RECENT_RUN_LIMIT = 10;
+// decode() is synchronous and non-streaming, so each call resets decoder state.
+// Concurrent response reads never share an incremental UTF-8 decoding session.
+const JSON_DECODER = new TextDecoder('utf-8', { fatal: true });
 
 class SchedulerError extends Error {
   constructor(reason) {
@@ -85,20 +88,25 @@ async function boundedJson(response) {
   } finally {
     reader.releaseLock();
   }
-  const bytes = new Uint8Array(size);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
+  // GitHub's small replies usually arrive as one chunk. Only after EOF and the
+  // byte limit check may that view be decoded directly, without a second copy.
+  let bytes = chunks[0];
+  if (chunks.length !== 1) {
+    bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
   }
   try {
-    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+    return JSON.parse(JSON_DECODER.decode(bytes));
   } catch {
     fail('invalid_github_json');
   }
 }
 
-async function github(fetchImpl, token, path, { method = 'GET', body } = {}) {
+async function github(fetchImpl, headers, path, { method = 'GET', body } = {}) {
   // All callers use constants or validated numeric IDs. No binding can change
   // the origin or redirect an Authorization header to another service.
   const url = new URL(path, API_ORIGIN);
@@ -115,13 +123,7 @@ async function github(fetchImpl, token, path, { method = 'GET', body } = {}) {
         // without making a second request or forwarding Authorization.
         redirect: 'manual',
         signal: controller.signal,
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: 'application/vnd.github+json',
-          'X-GitHub-Api-Version': API_VERSION,
-          'User-Agent': 'pharma-radar-collection-scheduler',
-          ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-        },
+        headers: body === undefined ? headers : { ...headers, 'Content-Type': 'application/json' },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
     } catch {
@@ -162,9 +164,13 @@ function validateRun(run, workflowId, now) {
   if (run.repository?.full_name !== REPOSITORY) fail('invalid_workflow_runs');
   if (run.status === 'completed' ? !CONCLUSIONS.has(run.conclusion) : run.conclusion !== null) fail('invalid_workflow_runs');
   const created = timestamp(run.created_at, now);
-  const started = run.run_started_at == null ? created : timestamp(run.run_started_at, now);
+  const started = run.run_started_at == null || run.run_started_at === run.created_at
+    ? created : timestamp(run.run_started_at, now);
   if (started < created) fail('invalid_github_timestamp');
-  return { ...run, activityTime: Math.max(created, started) };
+  // Retain only validated decision fields, rather than copying the large API
+  // record (actors, URLs and nested repository metadata are not used here).
+  return { id: run.id, status: run.status, conclusion: run.conclusion,
+    createdTime: created, activityTime: Math.max(created, started) };
 }
 
 function validateRunList(data, workflowId, now, limit) {
@@ -190,7 +196,7 @@ function admittedStepTime(data, run, now) {
       if (step.conclusion === 'skipped') continue;
       if (step.status !== 'completed' || !CONCLUSIONS.has(step.conclusion)) fail('invalid_workflow_jobs');
       const started = timestamp(step.started_at, now);
-      if (started < timestamp(run.created_at, now)) fail('invalid_github_timestamp');
+      if (started < run.createdTime) fail('invalid_github_timestamp');
       admittedAt = started;
     }
   }
@@ -210,10 +216,17 @@ export async function checkCollection(env, { fetchImpl = fetch, now = Date.now()
     if (!Number.isFinite(now)) fail('invalid_clock');
     const config = configuration(env);
     if (!config.enabled) return record('disabled');
-    const workflow = await github(fetchImpl, config.token, workflowPath);
+    // Credentials belong only to this invocation; all GETs reuse its headers.
+    const headers = {
+      Authorization: `Bearer ${config.token}`,
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': API_VERSION,
+      'User-Agent': 'pharma-radar-collection-scheduler',
+    };
+    const workflow = await github(fetchImpl, headers, workflowPath);
     if (!isObject(workflow) || !isId(workflow.id) || workflow.path !== `.github/workflows/${WORKFLOW}` || typeof workflow.state !== 'string') fail('invalid_workflow_metadata');
     if (workflow.state !== 'active') return record('workflow_disabled');
-    const variable = await github(fetchImpl, config.token, `${repositoryPath}/actions/variables/COLLECT_ENABLED`);
+    const variable = await github(fetchImpl, headers, `${repositoryPath}/actions/variables/COLLECT_ENABLED`);
     if (!isObject(variable) || variable.name !== 'COLLECT_ENABLED' || !['true', 'false'].includes(variable.value)) fail('invalid_collection_flag');
     if (variable.value !== 'true') return record('collection_disabled');
 
@@ -222,7 +235,7 @@ export async function checkCollection(env, { fetchImpl = fetch, now = Date.now()
     // queued runs that completed recently can fall outside this heuristic;
     // workflow concurrency and the database gate still prevent extra work.
     const createdSince = encodeURIComponent(`>=${new Date(now - HISTORY_CREATION_WINDOW_MS).toISOString()}`);
-    const recentData = await github(fetchImpl, config.token, `${workflowPath}/runs?branch=${REF}&per_page=${RECENT_RUN_LIMIT}&created=${createdSince}`);
+    const recentData = await github(fetchImpl, headers, `${workflowPath}/runs?branch=${REF}&per_page=${RECENT_RUN_LIMIT}&created=${createdSince}`);
     const runs = validateRunList(recentData, workflow.id, now, RECENT_RUN_LIMIT);
     for (const run of runs) {
       if (run.status !== 'completed') {
@@ -231,7 +244,7 @@ export async function checkCollection(env, { fetchImpl = fetch, now = Date.now()
       }
       if (run.conclusion === 'action_required') fail('workflow_action_required');
       if (run.conclusion === 'skipped' || now - run.activityTime >= LOOKBACK_MS) continue;
-      const jobs = await github(fetchImpl, config.token, `${repositoryPath}/actions/runs/${run.id}/jobs?filter=latest&per_page=10`);
+      const jobs = await github(fetchImpl, headers, `${repositoryPath}/actions/runs/${run.id}/jobs?filter=latest&per_page=10`);
       const admittedAt = admittedStepTime(jobs, run, now);
       if (admittedAt !== null && now - admittedAt < MIN_INTERVAL_MS) return record('recent_collection', { runId: run.id });
     }
@@ -240,7 +253,7 @@ export async function checkCollection(env, { fetchImpl = fetch, now = Date.now()
     // Before any POST (or dry-run due), find even old queued runs outside the
     // history window. Concurrency and DB admission protect the remaining race.
     const activeLists = await Promise.all(ACTIVE_STATUSES.map(async status => {
-      const data = await github(fetchImpl, config.token, `${workflowPath}/runs?branch=${REF}&status=${status}&per_page=1`);
+      const data = await github(fetchImpl, headers, `${workflowPath}/runs?branch=${REF}&status=${status}&per_page=1`);
       const runs = validateRunList(data, workflow.id, now, 1);
       if (runs.some(run => run.status !== status)) fail('invalid_workflow_runs');
       return runs;
@@ -251,7 +264,7 @@ export async function checkCollection(env, { fetchImpl = fetch, now = Date.now()
       return record('active_run', { runId: active.id });
     }
     if (config.dryRun) return record('dry_run_due');
-    const result = await github(fetchImpl, config.token, `${workflowPath}/dispatches`, { method: 'POST', body: { ref: REF, inputs: { trigger_source: 'cloudflare' } } });
+    const result = await github(fetchImpl, headers, `${workflowPath}/dispatches`, { method: 'POST', body: { ref: REF, inputs: { trigger_source: 'cloudflare' } } });
     return record('dispatched', result.dispatchId === null ? {} : { runId: result.dispatchId });
   } catch (error) {
     const reason = error instanceof SchedulerError ? error.reason : 'scheduler_internal_error';
