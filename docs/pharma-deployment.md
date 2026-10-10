@@ -1,5 +1,7 @@
 # 药研雷达：免费部署方案
 
+GitHub 定时采集的独立触发与验收见 [Cloudflare 调度说明](independent-scheduler.md)，继续沿用本方案的 Render、Supabase 和模型预算。
+
 站名：药研雷达；项目和仓库标识：`pharma-radar`。面向中药与天然产物、AI 药物发现、药理和制剂、临床及监管动态。网站已上线：[pharma-radar.onrender.com](https://pharma-radar.onrender.com)，[管理登录](https://pharma-radar.onrender.com/admin/login)，[公开源码](https://github.com/lemon7500/pharma-radar)。Supabase 免费项目、私有存储、DeepSeek、GitHub Secrets 均已配置；小时采集和每日加密备份已启用。
 
 ## 资源组合

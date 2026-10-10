@@ -12,6 +12,8 @@ Cloudflare's read/check/dispatch is not atomic. It may race with GitHub or anoth
 
 The recent-run check inspects the named `Process due sources and queued work` step. A skipped step does not count as a recent collection. For older successful workflow versions without that name, it conservatively uses the run start time until that record leaves the lookback window.
 
+The recent-history request uses GitHub's `created` filter for the last 210 minutes (90-minute lookback plus the two-hour stale threshold), keeping the JSON response small enough for the Free CPU budget. The five active-status queries have no creation-date limit. This history check reduces redundant dispatches; an unusually old queued run that starts and completes recently can be outside the creation window. Concurrency and database admission remain the protection against duplicate processing. Verify real Cron CPU after changes instead of assuming that request count proves Free-plan fit.
+
 All requests use a fixed repository, workflow, ref and `api.github.com` origin, refuse redirects and have bounded response sizes/timeouts. Uncertain dispatch outcomes are not retried in the same invocation. Failures expose a static reason, never response bodies, tokens or original error messages. No HTTP request can dispatch a workflow; `workers.dev` and preview URLs are disabled.
 
 Requests use `redirect: 'manual'`: the Workers runtime rejects the `error` mode supported by Node/browser fetch. Every non-success status, including all 3xx responses from reads or dispatches, is rejected without following `Location` or forwarding credentials. Validate this in actual workerd as well as Node mocks; a Node-only pass does not prove edge-runtime compatibility.

@@ -12,6 +12,7 @@ const CONCLUSIONS = new Set(['success', 'failure', 'neutral', 'cancelled', 'skip
 const MIN_INTERVAL_MS = 55 * 60_000;
 const STALE_ACTIVE_MS = 2 * 60 * 60_000;
 const LOOKBACK_MS = 90 * 60_000;
+const HISTORY_CREATION_WINDOW_MS = LOOKBACK_MS + STALE_ACTIVE_MS;
 const REQUEST_TIMEOUT_MS = 8_000;
 const MAX_JSON_BYTES = 128 * 1024;
 const RECENT_RUN_LIMIT = 10;
@@ -230,7 +231,12 @@ export async function checkCollection(env, { fetchImpl = fetch, now = Date.now()
       if (now - active.activityTime >= STALE_ACTIVE_MS) fail('stale_active_run');
       return record('active_run', { runId: active.id });
     }
-    const recentData = await github(fetchImpl, config.token, `${workflowPath}/runs?branch=${REF}&per_page=${RECENT_RUN_LIMIT}`);
+    // Bound the large historical JSON response to keep Free-plan CPU small.
+    // Active queries above stay unbounded by creation date. Exceptionally old
+    // queued runs that completed recently can fall outside this heuristic;
+    // workflow concurrency and the database gate still prevent extra work.
+    const createdSince = encodeURIComponent(`>=${new Date(now - HISTORY_CREATION_WINDOW_MS).toISOString()}`);
+    const recentData = await github(fetchImpl, config.token, `${workflowPath}/runs?branch=${REF}&per_page=${RECENT_RUN_LIMIT}&created=${createdSince}`);
     const runs = validateRunList(recentData, workflow.id, now, RECENT_RUN_LIMIT);
     for (const run of runs) {
       if (run.status !== 'completed') return record('active_run', { runId: run.id });

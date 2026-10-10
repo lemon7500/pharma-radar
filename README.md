@@ -16,6 +16,8 @@
 
 完整配置、配额和交付步骤：[部署方案](docs/pharma-deployment.md)。模板入口：[render.yaml](render.yaml)、[小时采集](.github/workflows/pharma-collect.yml)、[私有加密备份](.github/workflows/pharma-backup.yml)。密钥通过平台环境变量和 Secrets 设置，绝不提交源码。
 
+GitHub 定时任务可能延迟；[Cloudflare 独立定时补充方案](docs/independent-scheduler.md) 可触发相同工作流，并沿用数据库准入、信源间隔及模型预算。
+
 ## 定制内容
 
 - 中药、天然产物和 AI 制药的主题关键词分别管理；含药理、制剂、临床、监管、论文与工具。

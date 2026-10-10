@@ -70,9 +70,11 @@ function harness({ active = {}, recent = [], jobData = new Map(), override, disp
       const status = url.searchParams.get('status');
       assert.equal(url.searchParams.get('per_page'), status === null ? '10' : '1');
       if (status !== null) {
+        assert.equal(url.searchParams.has('created'), false, 'Active queries must see old queued work');
         assert.ok(ACTIVE.includes(status));
         return json(list(active[status] ?? []));
       }
+      assert.equal(url.searchParams.get('created'), `>=${iso(210)}`);
       return json(list(recent));
     }
     const jobMatch = url.pathname.match(/^\/repos\/lemon7500\/pharma-radar\/actions\/runs\/(\d+)\/jobs$/);
@@ -169,6 +171,30 @@ test('stale active run fails closed without adding queued work', async () => {
   await rejectsWith(h, 'stale_active_run');
   assert.equal(h.dispatches().length, 0);
   assert.equal(h.requests.length, 7);
+});
+
+test('historical response uses a creation window without filtering active queries', async () => {
+  const h = harness();
+  assert.equal((await h.check()).reason, 'dispatched');
+  const recent = h.requests.find(({ url }) => url.pathname.endsWith('/runs') && !url.searchParams.has('status'));
+  assert.equal(recent.url.searchParams.get('created'), `>=${iso(210)}`);
+  assert.equal(h.requests.filter(({ url }) => url.searchParams.has('status')).length, 5);
+});
+
+test('old queued work remains visible outside the historical creation window', async () => {
+  const h = harness({ active: { queued: [run({ status: 'queued', age: 240 })] } });
+  await rejectsWith(h, 'stale_active_run');
+  assert.equal(h.requests.length, 7);
+  assert.equal(h.dispatches().length, 0);
+});
+
+test('a delayed start inside the creation window uses actual collection time', async () => {
+  const h = harness({
+    recent: [run({ age: 200, run_started_at: iso(20) })],
+    jobData: new Map([[21, jobs(21, { age: 10 })]]),
+  });
+  assert.equal((await h.check()).reason, 'recent_collection');
+  assert.equal(h.dispatches().length, 0);
 });
 
 test('a stalled GitHub request is aborted at its deadline without logging its original error', async t => {

@@ -33,6 +33,20 @@ async function runtime(t, { enabled = true, dryRun = true, redirectAt, redirectS
   // network, including a mistakenly followed redirect or an unexpected target.
   const outboundService = async request => {
     const url = new URL(request.url);
+    if (url.pathname === `${workflow}/runs`) {
+      if (url.searchParams.has('status')) {
+        assert.equal(url.searchParams.has('created'), false, 'Active-run checks must find old queued runs too');
+      } else {
+        const filters = url.searchParams.getAll('created');
+        assert.equal(filters.length, 1, 'Recent runs require exactly one created filter');
+        assert.match(filters[0], /^>=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+        const boundary = Date.parse(filters[0].slice(2));
+        assert.ok(Math.abs(boundary - (Date.now() - 210 * 60_000)) <= 30_000, 'Recent created boundary must be now minus 210 minutes');
+        // Only normalize the filter after validating its name, syntax and age.
+        // Remaining query parameters still have to match the exact mock path.
+        url.searchParams.delete('created');
+      }
+    }
     const path = url.pathname + url.search;
     const call = { method: request.method, origin: url.origin, path };
     calls.push(call);
