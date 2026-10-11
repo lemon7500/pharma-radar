@@ -1,5 +1,6 @@
 // Reports through the public read layer: website DTOs and the v1 shapes. Only real reports are
 // listed; a missing date is a 404, never another day. Withdrawn citations are marked, not shown.
+import { registerPublicCacheReset } from "./cache-permissions.ts";
 import type { ReportCitation, ReportDetail, ReportIndexEntry, ReportNavigationEntry, ReportKind } from "@aihot/contracts/site";
 import { sql } from "../db.ts";
 import { cached, type Cached } from "../lib/cache.ts";
@@ -34,14 +35,14 @@ interface Availability {
 async function availability(ids: string[]): Promise<Map<string, Availability>> {
   const out = new Map<string, Availability>();
   if (ids.length === 0) return out;
-  const rows = await sql<{ id: string; visibility: string; eligible: boolean; first_party: boolean; source_id: string; icon_url: string | null; story_public_id: string | null; at: Date | null; research_area:string|null; category:string|null }[]>`
-    SELECT p.article_id AS id, p.visibility, p.eligible, p.first_party, p.source_id, s.icon_url, st.public_id::text AS story_public_id,
+  const rows = await sql<{ id: string; visibility: string; eligible: boolean; first_party: boolean; source_id: string; source_mode: string | null; icon_url: string | null; story_public_id: string | null; at: Date | null; research_area:string|null; category:string|null }[]>`
+    SELECT p.article_id AS id, p.visibility, p.eligible, p.first_party, p.source_id, s.participation_mode AS source_mode, s.icon_url, st.public_id::text AS story_public_id,
       coalesce(p.published_at, p.discovered_at) AS at, p.research->'areas'->>0 AS research_area, p.category
     FROM publications p LEFT JOIN sources s ON s.id = p.source_id LEFT JOIN stories st ON st.id = p.story_id
     WHERE p.article_id IN ${sql(ids)}`;
   for (const r of rows) {
     out.set(r.id, {
-      available: r.visibility === "public" && r.eligible,
+      available: r.visibility === "public" && r.eligible && r.source_mode === "editorial",
       firstParty: r.first_party,
       sourceId: r.source_id,
       sourceIcon: r.icon_url,
@@ -58,8 +59,8 @@ export async function unavailableIds(ids: string[]): Promise<Set<string>> {
   const unique = [...new Set(ids.filter(Boolean))];
   if (!unique.length) return new Set();
   const rows = await sql<{ id: string }[]>`
-    SELECT article_id AS id FROM publications
-    WHERE article_id = ANY(${unique}::text[]) AND (visibility <> 'public' OR NOT eligible)`;
+    SELECT p.article_id AS id FROM publications p JOIN sources s ON s.id = p.source_id
+    WHERE p.article_id = ANY(${unique}::text[]) AND (p.visibility <> 'public' OR NOT p.eligible OR s.participation_mode <> 'editorial')`;
   return new Set(rows.map((r) => r.id));
 }
 
@@ -174,6 +175,7 @@ async function leadCover(itemId: string): Promise<{ url: string; srcSet?: string
   const [row] = await sql<{ m: { url: string; width?: number; height?: number } }[]>`
     SELECT img.m
     FROM publications p JOIN articles a ON a.id = p.article_id
+    JOIN sources current_source ON current_source.id=p.source_id AND current_source.participation_mode='editorial' AND current_source.site_fulltext
     CROSS JOIN LATERAL (
       SELECT m FROM jsonb_array_elements(coalesce(a.media, '[]'::jsonb)) m
       WHERE m->>'kind' = 'image' AND coalesce((m->>'width')::numeric, 800) >= 480 LIMIT 1
@@ -271,6 +273,7 @@ export async function loadReport(kind: ReportKind, key: string): Promise<ReportD
  */
 const INDEX_LIMIT = 400;
 const indexes = new Map<ReportKind, Cached<{ rows: Awaited<ReturnType<typeof reportIndexRows>>; gone: Set<string> }>>();
+registerPublicCacheReset(() => { for (const entry of indexes.values()) entry.clear(); });
 export function reportIndex(kind: ReportKind) {
   let entry = indexes.get(kind);
   if (!entry) {

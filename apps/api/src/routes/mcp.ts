@@ -11,6 +11,7 @@ import { MCP_TOOL_NAMES as T } from "@aihot/contracts/mcp";
 import { isValidDate } from "@aihot/contracts/time";
 import { publicationLabel, publicationTime } from "@aihot/contracts/publication-time";
 
+import { registerPublicCacheReset } from "@aihot/backend/publication/cache-permissions";
 import { v1Items } from "@aihot/backend/publication/v1";
 import { SearchBusyError } from "@aihot/backend/publication/pool";
 import { resolveStory, v1HotTopics, v1Story } from "@aihot/backend/publication/stories";
@@ -84,11 +85,12 @@ const DAILY_INPUT = z.strictObject({
 // Agents repeat the same calls. Answers are kept 30 s, within the minute the v1 HTTP answers are
 // shared for; a failed read is not kept.
 const results = new Map<string, { at: number; value: Promise<unknown> }>();
+registerPublicCacheReset(() => results.clear());
 function recent<T>(key: string, load: () => Promise<T>): Promise<T> {
   const hit = results.get(key);
   if (hit && Date.now() - hit.at < 30_000) return hit.value as Promise<T>;
   const value = load();
-  value.catch(() => results.delete(key));
+  value.catch(() => { if (results.get(key)?.value === value) results.delete(key); });
   if (results.size >= 500) results.delete(results.keys().next().value!);
   results.set(key, { at: Date.now(), value });
   return value;

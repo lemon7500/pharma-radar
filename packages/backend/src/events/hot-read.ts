@@ -1,5 +1,6 @@
 // Reading the latest published hot ranking. The web shows heat values; machine exits only ranks.
 import type { HotParticipant, HotStripEntry } from "@aihot/contracts/site";
+import { registerPublicCacheReset } from "../publication/cache-permissions.ts";
 import { sql } from "../db.ts";
 import { proxiedImage, proxiedImageSet } from "../media/imgproxy.ts";
 
@@ -54,7 +55,21 @@ async function queryLatestHotRanking(): Promise<HotRanking | null> {
   const [row] = await sql<{ id: number; computed_at: Date; rule_version: string; entries: HotEntry[]; evidence: Record<string, unknown> | null }[]>`
     SELECT id, computed_at, rule_version, entries, evidence FROM hot_rankings WHERE published ORDER BY computed_at DESC LIMIT 1`;
   if (!row) return null;
-  return { id: row.id, computedAt: row.computed_at.toISOString(), ruleVersion: row.rule_version, entries: row.entries, coverage: row.evidence };
+  // The ranking is a persisted projection too. Drop entries affected by a later
+  // source restriction until the ranking is recomputed; check the whole page in one query.
+  const ids = row.entries.map(e => e.storyId);
+  const reps = row.entries.map(e => e.representativeItemId ?? "");
+  const blocked = new Set((ids.length ? await sql<{ story_id: number }[]>`
+    SELECT entry.story_id FROM unnest(${ids}::bigint[], ${reps}::text[]) AS entry(story_id, article_id)
+    JOIN publications p ON p.article_id=entry.article_id JOIN sources s ON s.id=p.source_id
+    WHERE p.visibility <> 'public' OR s.participation_mode <> 'editorial'
+    UNION
+    SELECT p.story_id FROM publications p JOIN sources s ON s.id=p.source_id
+    WHERE p.story_id=ANY(${ids}::bigint[]) AND (s.participation_mode='isolated' OR (s.participation_mode <> 'editorial' AND p.eligible))
+    UNION
+    SELECT ss.story_id FROM story_signals ss JOIN sources s ON s.id=ss.source_id
+    WHERE ss.story_id=ANY(${ids}::bigint[]) AND s.participation_mode='isolated'` : []).map(r => Number(r.story_id)));
+  return { id: row.id, computedAt: row.computed_at.toISOString(), ruleVersion: row.rule_version, entries: row.entries.filter(e => !blocked.has(e.storyId)), coverage: row.evidence };
 }
 
 // Faces and words change only with the ranking, so they are read once per ranking.
@@ -65,6 +80,9 @@ interface Extras {
 let extrasCache: { rankingId: number; extras: Extras } | null = null;
 const extrasPending = new Map<number, Promise<Extras>>();
 
+let extrasGeneration = 0;
+registerPublicCacheReset(() => { extrasGeneration++; extrasCache = null; extrasPending.clear(); rankingPending = null; });
+
 async function readExtras(ranking: HotRanking): Promise<Extras> {
   if (extrasCache?.rankingId === ranking.id) return extrasCache.extras;
   const pending = extrasPending.get(ranking.id);
@@ -72,10 +90,11 @@ async function readExtras(ranking: HotRanking): Promise<Extras> {
   const load = queryExtras(ranking);
   extrasPending.set(ranking.id, load);
   try { return await load; }
-  finally { extrasPending.delete(ranking.id); }
+  finally { if (extrasPending.get(ranking.id) === load) extrasPending.delete(ranking.id); }
 }
 
 async function queryExtras(ranking: HotRanking): Promise<Extras> {
+  const mine = extrasGeneration;
   const ids = ranking.entries.map((e) => e.storyId);
   const [faces, texts] = await Promise.all([
     // A participant's face: the source's icon, else the avatar on that account's latest post in the story.
@@ -83,7 +102,7 @@ async function queryExtras(ranking: HotRanking): Promise<Extras> {
       SELECT DISTINCT ON (s.id) s.name, s.icon_url, a.x_post->>'avatarUrl' AS avatar
       FROM story_signals ss JOIN sources s ON s.id = ss.source_id
       LEFT JOIN articles a ON a.id = ss.article_id AND a.x_post ? 'avatarUrl'
-      WHERE ss.story_id = ANY(${ids}::bigint[])
+      WHERE ss.story_id = ANY(${ids}::bigint[]) AND s.participation_mode <> 'isolated'
       ORDER BY s.id, (a.id IS NULL), a.discovered_at DESC`,
     sql<{ id: number; digest: string | null; summary: string | null; latest: string | null }[]>`
       SELECT id, digest, summary, latest FROM stories WHERE id = ANY(${ids}::bigint[])`,
@@ -92,7 +111,7 @@ async function queryExtras(ranking: HotRanking): Promise<Extras> {
     faces: new Map(faces.map((f) => [f.name, f.icon_url ?? f.avatar])),
     texts: new Map(texts.map((t) => [Number(t.id), { summary: t.digest ?? t.summary, latest: t.latest }])),
   };
-  extrasCache = { rankingId: ranking.id, extras };
+  if (mine === extrasGeneration) extrasCache = { rankingId: ranking.id, extras };
   return extras;
 }
 

@@ -1,4 +1,5 @@
 // Public pool (/all) with numeric pages, and search in its two orderings.
+import { registerPublicCacheReset } from "./cache-permissions.ts";
 import type { PoolResponse, TimelineFilters } from "@aihot/contracts/site";
 import { addDays, beijingDate, beijingMidnight, isValidDate } from "@aihot/contracts/time";
 import { publicationOrderAt } from "./time.ts";
@@ -70,6 +71,13 @@ export function directMatchCondition(terms: string[]) {
   return terms.reduce((acc, t) => sql`${acc} AND p.search_text LIKE ${"%" + t + "%"}`, sql``);
 }
 
+/** A stale body-search projection cannot reveal a phrase after the source withdraws full-text permission. */
+function bodySearchCondition(articleId: ReturnType<typeof sql>) {
+  return sql`EXISTS (SELECT 1 FROM publications body_publication JOIN sources body_source ON body_source.id = body_publication.source_id
+    WHERE body_publication.article_id = ${articleId} AND body_publication.body_mode = 'full'
+      AND body_source.site_fulltext AND body_source.participation_mode = 'editorial')`;
+}
+
 /**
  * The public APIs' q (v1 and MCP): every term matches the subject, title or summary, or
  * the start of a body whose full text may be shown, as the API documents it ("title / Chinese
@@ -81,7 +89,7 @@ export function publicMatchCondition(terms: string[]) {
   // may hash every matching body in pool_search before serving even the first 40 recent items.
   return terms.reduce(
     (acc, t) => sql`${acc} AND (p.search_text LIKE ${"%" + t + "%"} OR EXISTS (
-      SELECT 1 FROM pool_search ps WHERE ps.article_id = p.article_id AND ps.body LIKE ${"%" + t + "%"} OFFSET 0))`,
+      SELECT 1 FROM pool_search ps WHERE ps.article_id = p.article_id AND ps.body LIKE ${"%" + t + "%"} AND ${bodySearchCondition(sql`ps.article_id`)} OFFSET 0))`,
     sql``,
   );
 }
@@ -89,20 +97,25 @@ export function publicMatchCondition(terms: string[]) {
 /** Unfiltered-by-search totals only set the page count; they are reused for 30 seconds per filter. */
 const countCache = new Map<string, { at: number; n: number }>();
 const countPending = new Map<string, Promise<number>>();
+let countGeneration = 0;
+registerPublicCacheReset(() => { countGeneration++; countCache.clear(); countPending.clear(); });
 async function poolCount(key: string | null, query: () => Promise<Array<{ n: number }>>): Promise<number> {
   if (key === null) return Number(one(await query()).n);
   const hit = countCache.get(key);
   if (hit && Date.now() - hit.at < 30_000) return hit.n;
   const pending = countPending.get(key);
   if (pending) return pending;
+  const mine = countGeneration;
   const load = (async () => {
     const n = Number(one(await query()).n);
-    if (countCache.size >= 200) countCache.delete(countCache.keys().next().value!);
-    countCache.set(key, { at: Date.now(), n });
+    if (mine === countGeneration) {
+      if (countCache.size >= 200) countCache.delete(countCache.keys().next().value!);
+      countCache.set(key, { at: Date.now(), n });
+    }
     return n;
   })();
   countPending.set(key, load);
-  try { return await load; } finally { countPending.delete(key); }
+  try { return await load; } finally { if (countPending.get(key) === load) countPending.delete(key); }
 }
 
 export interface PoolQuery extends TimelineFilters {
@@ -162,16 +175,16 @@ export async function loadPool(query: PoolQuery): Promise<PoolResponse> {
         && (!query.channel || query.channel === "all") && !query.category && !query.tag && !query.topicTags?.length
         && !Object.values(researchFilterParams(query)).some(Boolean);
       const partScore = terms.reduce(
-        (acc, t) => sql`${acc} + (CASE WHEN ${like(sql`ps.direct`, t)} THEN 3 ELSE 0 END) + (CASE WHEN ${like(sql`ps.body`, t)} THEN 1 ELSE 0 END)`,
+        (acc, t) => sql`${acc} + (CASE WHEN ${like(sql`ps.direct`, t)} THEN 3 ELSE 0 END) + (CASE WHEN ${like(sql`ps.body`, t)} AND ${bodySearchCondition(sql`ps.article_id`)} THEN 1 ELSE 0 END)`,
         sql`0`,
       );
       const titleScore = terms.reduce((acc, t) => sql`${acc} + (CASE WHEN ${like(sql`lower(p.title)`, t)} THEN 6 ELSE 0 END)`, sql`0`);
-      const anyMatch = terms.reduce((acc, t) => sql`${acc} AND (${like(sql`ps.direct`, t)} OR ${like(sql`ps.body`, t)})`, sql`TRUE`);
+      const anyMatch = terms.reduce((acc, t) => sql`${acc} AND (${like(sql`ps.direct`, t)} OR (${like(sql`ps.body`, t)} AND ${bodySearchCondition(sql`ps.article_id`)}))`, sql`TRUE`);
       const matches = splitFields ? sql`
         SELECT coalesce(d.article_id, b.article_id) AS article_id,
           (CASE WHEN d.article_id IS NOT NULL THEN 3 ELSE 0 END) + (CASE WHEN b.article_id IS NOT NULL THEN 1 ELSE 0 END) AS part
         FROM (SELECT article_id FROM pool_search WHERE direct LIKE ${"%" + terms[0]! + "%"}) d
-        FULL JOIN (SELECT article_id FROM pool_search WHERE body LIKE ${"%" + terms[0]! + "%"}) b ON b.article_id = d.article_id`
+        FULL JOIN (SELECT article_id FROM pool_search WHERE body LIKE ${"%" + terms[0]! + "%"} AND ${bodySearchCondition(sql`pool_search.article_id`)}) b ON b.article_id = d.article_id`
         : sql`SELECT ps.article_id, (${partScore}) AS part FROM pool_search ps WHERE ${anyMatch}`;
       type RankedRow = Omit<ItemRow, "id"> & { id: string | null; rel: number; total: number };
       const result = await db<RankedRow[]>`

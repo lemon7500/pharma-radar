@@ -2,12 +2,13 @@
 // feedback chat, operations alert chat, image upload). Content groups use custom bot webhooks.
 // Alerts and feedback never go to content groups, and content never goes to internal chats.
 // Everything outward is off unless explicitly enabled (development and parallel runs stay silent).
-import { readFile, unlink } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { beijingDate, beijingTime } from "@aihot/contracts/time";
 import { config, credential } from "../config.ts";
 import { sql } from "../db.ts";
-import { removeDurableFile, restoreDurableFile } from "../operations/durable-files.ts";
+import { durableStorageConfigured, restoreDurableFile } from "../operations/durable-files.ts";
+import { cleanupFeedbackScreenshot } from "../operations/feedback-abuse.ts";
 
 const API = "https://open.feishu.cn/open-apis";
 
@@ -128,31 +129,49 @@ const SCREENSHOT_GIVE_UP_MS = 24 * 3600_000;
  * The screenshot to attach, uploaded now or on an earlier try. Only the Feishu image key is kept (privacy
  * notice): the local file is removed once uploaded, or once the upload is given up.
  */
-async function screenshotFor(fb: { id: number; screenshot_key: string | null; created_at: Date }): Promise<{ imageKey: string | null; note: string | null }> {
+interface FeedbackScreenshot {
+  id: number;
+  screenshot_key: string | null;
+  screenshot_cleanup_key: string | null;
+  screenshot_remote: boolean | null;
+  created_at: Date;
+}
+
+async function screenshotFor(fb: FeedbackScreenshot): Promise<{ imageKey: string | null; note: string | null }> {
   const key = fb.screenshot_key;
+  if (fb.screenshot_cleanup_key) await cleanupFeedbackScreenshot(fb);
   if (key?.startsWith("feishu:")) return { imageKey: key.slice("feishu:".length), note: null };
-  if (key === "gone:upload") return { imageKey: null, note: "（截图未能上传，已删除）" };
+  if (key === "gone:upload") return { imageKey: null, note: "（截图未能上传）" };
   if (key === "gone:missing") return { imageKey: null, note: "（截图文件已不存在）" };
   if (!key?.startsWith("local:")) return { imageKey: null, note: null };
   const file = path.join(config.dataDir, "feedback-screenshots", key.slice("local:".length));
-  await restoreDurableFile(`feedback-screenshots/${path.basename(file)}`);
+  const storageKey = `feedback-screenshots/${path.basename(file)}`;
+  await restoreDurableFile(storageKey);
   const data = await readFile(file).catch(() => null);
   if (!data) {
-    await sql`UPDATE feedback SET screenshot_key = 'gone:missing' WHERE id = ${fb.id}`;
+    // An absent cache plus absent remote configuration does not prove the private original is gone.
+    if ((fb.screenshot_remote ?? config.environmentName === "production") && !durableStorageConfigured()) {
+      throw new Error("Remote storage configuration is required to restore this screenshot");
+    }
+    await sql`UPDATE feedback SET screenshot_key = 'gone:missing', screenshot_cleanup_key = ${storageKey} WHERE id = ${fb.id}`;
+    await cleanupFeedbackScreenshot({ ...fb, screenshot_cleanup_key: storageKey });
     return { imageKey: null, note: "（截图文件已不存在）" };
   }
+  let imageKey: string;
   try {
-    const imageKey = await uploadImage(data, path.basename(file));
-    await sql`UPDATE feedback SET screenshot_key = ${`feishu:${imageKey}`} WHERE id = ${fb.id}`;
-    await removeDurableFile(`feedback-screenshots/${path.basename(file)}`);
-    return { imageKey, note: null };
+    imageKey = await uploadImage(data, path.basename(file));
   } catch (error) {
-    // The forwarding sweep tries again; after a day the text goes without it.
+    // Only an upload failure is governed by the one-day give-up rule.
     if (Date.now() - fb.created_at.getTime() < SCREENSHOT_GIVE_UP_MS) throw error;
-    await sql`UPDATE feedback SET screenshot_key = 'gone:upload' WHERE id = ${fb.id}`;
-    await removeDurableFile(`feedback-screenshots/${path.basename(file)}`);
-    return { imageKey: null, note: "（截图未能上传，已删除）" };
+    await sql`UPDATE feedback SET screenshot_key = 'gone:upload', screenshot_cleanup_key = ${storageKey} WHERE id = ${fb.id}`;
+    const removed = await cleanupFeedbackScreenshot({ ...fb, screenshot_cleanup_key: storageKey });
+    return { imageKey: null, note: removed ? "（截图未能上传，已删除）" : "（截图未能上传，原文件等待清理）" };
   }
+  // Retain the original's key and accounting in the same commit as the reusable Feishu image key.
+  // Deletion failure must not turn a successful upload into an upload failure or prevent text delivery.
+  await sql`UPDATE feedback SET screenshot_key = ${`feishu:${imageKey}`}, screenshot_cleanup_key = ${storageKey} WHERE id = ${fb.id}`;
+  await cleanupFeedbackScreenshot({ ...fb, screenshot_cleanup_key: storageKey });
+  return { imageKey, note: null };
 }
 
 /**
@@ -163,8 +182,8 @@ export async function forwardFeedbackToFeishu(id: number): Promise<"sent" | "dis
   if (!feishuInternalEnabled()) return "disabled";
   const chat = credential("integrations", "FEISHU_INTERNAL_CHAT_ID");
   if (!chat) return "disabled";
-  const [fb] = await sql<{ id: number; content: string; email: string | null; note: string | null; page_url: string | null; screenshot_key: string | null; created_at: Date }[]>`
-    SELECT id, content, email, note, page_url, screenshot_key, created_at FROM feedback WHERE id = ${id} AND forwarded_at IS NULL`;
+  const [fb] = await sql<{ id: number; content: string; email: string | null; note: string | null; page_url: string | null; screenshot_key: string | null; screenshot_cleanup_key: string | null; screenshot_remote: boolean | null; created_at: Date }[]>`
+    SELECT id, content, email, note, page_url, screenshot_key, screenshot_cleanup_key, screenshot_remote, created_at FROM feedback WHERE id = ${id} AND forwarded_at IS NULL`;
   if (!fb) return "disabled";
   try {
     const shot = await screenshotFor(fb);

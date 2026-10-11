@@ -109,7 +109,7 @@ function LegacyItemPage() {
   const [posterRequested, setPosterRequested] = useState(false);
   const [posterOpen, setPosterOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
-  useEffect(() => markRead(item.id), [item.id]);
+  useEffect(() => { if (!markRead(item.id)) setToast("浏览器存储已满或不可用，已读状态未能保存。"); }, [item.id]);
   useEffect(() => {
     if (!toast) return;
     const t = setTimeout(() => setToast(null), 1600);

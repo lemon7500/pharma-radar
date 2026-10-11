@@ -1,6 +1,7 @@
 // A short database lock makes admission atomic; uploads never hold a transaction open.
 import { randomUUID } from "node:crypto";
 import { sql, type Tx } from "../db.ts";
+import { config } from "../config.ts";
 import { durableStorageConfigured, removeDurableFile } from "./durable-files.ts";
 import { FeedbackRejected } from "./feedback.ts";
 
@@ -34,7 +35,7 @@ async function admissionLock(tx: Tx) {
 
 async function storageBytes(tx: Tx): Promise<number> {
   const [row] = await tx<{ bytes: number }[]>`
-    SELECT (SELECT coalesce(sum(coalesce(screenshot_bytes, ${OLD_IMAGE_MAX_BYTES})), 0) FROM feedback WHERE screenshot_key LIKE 'local:%')
+    SELECT (SELECT coalesce(sum(coalesce(screenshot_bytes, ${OLD_IMAGE_MAX_BYTES})), 0) FROM feedback WHERE screenshot_key LIKE 'local:%' OR screenshot_cleanup_key IS NOT NULL)
       + (SELECT coalesce(sum(screenshot_bytes), 0) FROM feedback_submission_attempts WHERE state = 'pending' OR cleanup_needed) AS bytes`;
   return row!.bytes;
 }
@@ -141,6 +142,18 @@ export async function failFeedback(reservation: FeedbackReservation, storageKey:
   } catch { /* Keep its bytes reserved until a cleanup retry succeeds. */ }
 }
 
+/** A delivered or given-up screenshot retains its bytes until both stores confirm deletion. */
+export async function cleanupFeedbackScreenshot(row: { id: number; screenshot_cleanup_key: string | null; screenshot_remote: boolean | null }): Promise<boolean> {
+  const key = row.screenshot_cleanup_key;
+  if (!key) return true;
+  try {
+    await removeDurableFile(key, { requireRemote: row.screenshot_remote ?? config.environmentName === "production" });
+    await sql`UPDATE feedback SET screenshot_cleanup_key = NULL, screenshot_bytes = 0
+      WHERE id = ${row.id} AND screenshot_cleanup_key = ${key}`;
+    return true;
+  } catch { return false; /* Keep its durable key and bytes reserved for the next maintenance sweep. */ }
+}
+
 /** Runs in the existing feedback maintenance job even when forwarding is disabled. */
 export async function cleanupFeedbackUploads(): Promise<void> {
   await sql.begin(async (tx) => { await admissionLock(tx); await prune(tx); });
@@ -152,4 +165,17 @@ export async function cleanupFeedbackUploads(): Promise<void> {
       await sql`UPDATE feedback_submission_attempts SET cleanup_needed = false WHERE id = ${row.id}::uuid AND state = 'failed'`;
     } catch { /* A failed deletion must never silently release storage accounting. */ }
   }));
+  // Committed feedback is independent of attempt receipts, which expire before legacy feedback does.
+  const screenshots = await sql<{ id: number; screenshot_cleanup_key: string; screenshot_remote: boolean | null }[]>`
+    SELECT id, screenshot_cleanup_key, screenshot_remote FROM feedback
+    WHERE screenshot_cleanup_key IS NOT NULL ORDER BY created_at LIMIT 4`;
+  await Promise.all(screenshots.map(cleanupFeedbackScreenshot));
+}
+
+/** Both failed submissions and committed feedback may still own an undeleted private screenshot. */
+export async function pendingFeedbackUploadCleanup(): Promise<number> {
+  const [row] = await sql<{ n: number }[]>`SELECT
+    (SELECT count(*)::int FROM feedback_submission_attempts WHERE cleanup_needed)
+    + (SELECT count(*)::int FROM feedback WHERE screenshot_cleanup_key IS NOT NULL) AS n`;
+  return row!.n;
 }

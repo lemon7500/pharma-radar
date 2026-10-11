@@ -2,6 +2,7 @@
 // one card per story, per fact outside a story, or per standalone article. A card sits at its latest
 // development's first appearance, so a new development brings it back up while a representative swap
 // never moves it; the representative is the first-party pick of the story's initiating fact.
+import { registerPublicCacheReset } from "./cache-permissions.ts";
 import type { GroupInfo, TimelineCard, TimelineFilters, TimelineResponse } from "@aihot/contracts/site";
 import { beijingDate } from "@aihot/contracts/time";
 import { sql } from "../db.ts";
@@ -9,7 +10,7 @@ import { decodeCursor, encodeCursor, InvalidCursorError, queryBinding } from "..
 import { researchCondition } from "../research/filters.ts";
 import { researchFilterParams } from "@aihot/contracts/research";
 import {
-  ITEM_COLUMNS, ITEM_FROM, categoryCondition, channelCondition, selectedCondition, tagCondition, toFeedItemSummary, topicCondition,
+  ITEM_COLUMNS, ITEM_FROM, categoryCondition, channelCondition, editorialSourceCondition, selectedCondition, tagCondition, toFeedItemSummary, topicCondition,
   type ItemRow,
 } from "./items.ts";
 
@@ -56,7 +57,7 @@ async function groupPool(q: TimelineQuery, now: Date, storyIds: number[], factId
     SELECT DISTINCT f.story_id, f.id AS fact_id, p.article_id, p.source_id, p.timeline_at AS at
     FROM facts f JOIN fact_articles fa ON fa.fact_id = f.id JOIN publications p ON p.article_id = fa.article_id
     WHERE (f.story_id IN ${sql(storyIds.length ? storyIds : [0])} OR f.id IN ${sql(factIds.length ? factIds : [0])})
-      AND p.visibility = 'public' AND p.eligible AND (NOT p.selected OR p.visible_after <= ${now}) ${filterSql(q)}`;
+      AND p.visibility = 'public' AND ${editorialSourceCondition()} AND p.eligible AND (NOT p.selected OR p.visible_after <= ${now}) ${filterSql(q)}`;
 }
 
 /**
@@ -66,21 +67,26 @@ async function groupPool(q: TimelineQuery, now: Date, storyIds: number[], factId
  */
 const groupedCache = new Map<string, { at: number; rows: Array<{ gk: string; anchor: number }> }>();
 const groupedPending = new Map<string, Promise<Array<{ gk: string; anchor: number }>>>();
+let groupedGeneration = 0;
+registerPublicCacheReset(() => { groupedGeneration++; groupedCache.clear(); groupedPending.clear(); });
 async function groupedAnchors(q: TimelineQuery, now: Date): Promise<Array<{ gk: string; anchor: number }>> {
   const key = binding(q);
   const cached = q.now ? undefined : groupedCache.get(key);
   if (cached && Date.now() - cached.at < 5000) return cached.rows;
   const pending = q.now ? undefined : groupedPending.get(key);
   if (pending) return pending;
+  const mine = groupedGeneration;
   const load = queryGroupedAnchors(q, now);
   if (q.now) return load;
   groupedPending.set(key, load);
   try {
     const rows = await load;
-    if (groupedCache.size >= 50) groupedCache.delete(groupedCache.keys().next().value!);
-    groupedCache.set(key, { at: Date.now(), rows });
+    if (mine === groupedGeneration) {
+      if (groupedCache.size >= 50) groupedCache.delete(groupedCache.keys().next().value!);
+      groupedCache.set(key, { at: Date.now(), rows });
+    }
     return rows;
-  } finally { groupedPending.delete(key); }
+  } finally { if (groupedPending.get(key) === load) groupedPending.delete(key); }
 }
 
 async function queryGroupedAnchors(q: TimelineQuery, now: Date) {

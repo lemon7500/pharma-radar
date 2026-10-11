@@ -33,10 +33,10 @@ export default function StarredPage() {
   const [sort,setSort] = useState("saved"); const [unread,setUnread] = useState(false);
   const timeOf = (s:typeof starred[number]) => s.publicationTime ?? publicationTime({publishedAt:s.publishedAt,research:s.publishedDate ? {bibliography:{publishedDate:s.publishedDate}} : null});
   const visible = starred.filter(s => !unread || !read.has(s.id)).slice().sort((a,b) => {
-    if(sort === "saved") return b.savedAt.localeCompare(a.savedAt);
+    if(sort === "saved") return Date.parse(b.savedAt) - Date.parse(a.savedAt);
     const at = timeOf(a).date, bt = timeOf(b).date;
-    if(!at || !bt) return at ? -1 : bt ? 1 : b.savedAt.localeCompare(a.savedAt);
-    return `${bt} ${timeOf(b).time || ""}`.localeCompare(`${at} ${timeOf(a).time || ""}`) || b.savedAt.localeCompare(a.savedAt);
+    if(!at || !bt) return at ? -1 : bt ? 1 : Date.parse(b.savedAt) - Date.parse(a.savedAt);
+    return `${bt} ${timeOf(b).time || ""}`.localeCompare(`${at} ${timeOf(a).time || ""}`) || Date.parse(b.savedAt) - Date.parse(a.savedAt);
   });
   const [mounted, setMounted] = useState(false);
   const [availability, setAvailability] = useState<Record<string, BookmarkAvailability>>({});
@@ -72,7 +72,7 @@ export default function StarredPage() {
     }
   };
 
-  const action = "text-[12.5px] text-ink-3 transition-colors hover:text-accent";
+  const action = "inline-flex min-h-11 min-w-11 items-center text-[12.5px] text-ink-3 transition-colors hover:text-accent";
   return (
     <div className="reading-list-page pb-12">
       <header className="flex flex-col gap-2 pb-4 pt-5 sm:flex-row sm:items-start sm:justify-between lg:pt-1">
@@ -89,7 +89,7 @@ export default function StarredPage() {
               <IconDownload size={13} /> 导出
             </button>
           )}
-          <input ref={fileRef} type="file" accept="application/json,.json" className="sr-only" onChange={(e) => doImport(e.target.files?.[0])} />
+          <input ref={fileRef} type="file" accept="application/json,.json" className="sr-only" onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ""; void doImport(file); }} />
         </div>
       </header>
       <p className="rounded-tile border border-line bg-surface px-4 py-2.5 text-[12.5px] text-ink-3">收藏只保存在当前浏览器；清除浏览器数据或换设备后不会同步。导入文件保留日期，具体发表时刻请打开资料页核对。</p>
@@ -100,7 +100,7 @@ export default function StarredPage() {
           className={`mt-3 flex items-start justify-between gap-3 rounded-tile px-4 py-2.5 text-[13px] ${notice?.kind === "ok" ? "bg-accent-soft text-accent-ink dark:text-accent" : "bg-hot-soft text-hot"}`}
         >
           {notice?.text}
-          <button type="button" aria-label="关闭" onClick={() => setNotice(null)} className="shrink-0 opacity-70 hover:opacity-100">
+          <button type="button" aria-label="关闭" onClick={() => setNotice(null)} className="grid min-h-11 min-w-11 shrink-0 place-items-center opacity-70 hover:opacity-100">
             <IconClose size={14} />
           </button>
         </div>
@@ -126,7 +126,7 @@ export default function StarredPage() {
                   <span className="ml-auto hidden shrink-0 sm:inline">
                     收藏于 <span className="num">{fullDateTime(s.savedAt)}</span>
                   </span>
-                  <button type="button" aria-label="取消收藏" title="取消收藏" onClick={() => removeStar(s.id)} className="relative z-10 -my-1 ml-auto grid size-7 shrink-0 place-items-center rounded-full text-ink-4 transition-colors hover:bg-bg-sunk hover:text-ink sm:ml-0">
+                  <button type="button" aria-label="取消收藏" title="取消收藏" onClick={() => { if (!removeStar(s.id)) setNotice({ kind:"error", text:"浏览器存储已满或不可用，未能取消收藏。请检查浏览器存储后重试。" }); }} className="relative z-10 -my-1 ml-auto grid size-11 shrink-0 place-items-center rounded-full text-ink-4 transition-colors hover:bg-bg-sunk hover:text-ink sm:ml-0">
                     <IconClose size={14} />
                   </button>
                 </div>

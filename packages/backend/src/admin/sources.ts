@@ -4,6 +4,7 @@ import { z } from "zod";
 import { sql } from "../db.ts";
 import { enqueue, QUEUES } from "../jobs/queue.ts";
 import { republishKey } from "../jobs/publication.ts";
+import { newShortId } from "../lib/ids.ts";
 import { normalizeUrl } from "../lib/url.ts";
 import { fetchJsonList } from "../sources/json-list.ts";
 import { fetchRss } from "../sources/rss.ts";
@@ -115,6 +116,13 @@ export async function updateSource(id: string, input: { patch: unknown; version:
       health = CASE WHEN ${patch.enabled ?? null}::boolean IS FALSE THEN 'paused' WHEN ${patch.enabled ?? null}::boolean IS TRUE AND health = 'paused' THEN 'unknown' ELSE health END,
       next_fetch_at = CASE WHEN ${patch.enabled ?? null}::boolean IS TRUE THEN now() ELSE next_fetch_at END
       WHERE id = ${id} RETURNING *`;
+    // Changing membership invalidates snapshots and watermarks in this same transaction.
+    // A temporary isolation followed by restoration can leave the projection/hash unchanged;
+    // inventing a read-time removal would lose the matching restore upsert permanently.
+    if (patch.participation_mode !== undefined && patch.participation_mode !== before.participation_mode) {
+      await tx`INSERT INTO settings (key, value, updated_by) VALUES ('selected_ledger_epoch', ${tx.json({ epoch: newShortId(6) })}, ${actor})
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()`;
+    }
     await audit(actor, "source.update", `source:${id}`, input.reason ?? null, Object.fromEntries(keys.map((k) => [k, before[k]])), patch);
     // What public exits show for this source's articles is derived from these fields: re-derive them
     // all (in the worker) so a revoked licence or an isolated source stops on every exit.

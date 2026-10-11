@@ -1,22 +1,26 @@
 // Share poster sheet: the server-rendered poster (with a QR code to the article), to save or hand to the
 // system share sheet. Loaded on demand from the article page; slides up on phones, centred on desktop.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { SITE } from "@aihot/industry/site";
 import { Presence } from "../../components/ui/Presence";
 import { IconClose, IconDownload, IconShare } from "../../components/icons";
+import { activateModalFocus } from "../../lib/modal-focus";
 
 export default function PosterSheet({ id, title, open, onClose }: { id: string; title: string; open: boolean; onClose: () => void }) {
   const src = `/og/posters/${id}.png`;
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
   const [canShareFile, setCanShareFile] = useState(false);
+  const dialog = useRef<HTMLDivElement>(null);
+  const closeButton = useRef<HTMLButtonElement>(null);
+  const close = useRef(onClose);
+  close.current = onClose;
 
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const restoreFocus = dialog.current && closeButton.current ? activateModalFocus(dialog.current, closeButton.current, () => close.current()) : null;
     const overflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    window.addEventListener("keydown", onKey);
     try {
       setCanShareFile(!!navigator.canShare?.({ files: [new File([], "p.png", { type: "image/png" })] }));
     } catch {
@@ -24,9 +28,9 @@ export default function PosterSheet({ id, title, open, onClose }: { id: string; 
     }
     return () => {
       document.body.style.overflow = overflow;
-      window.removeEventListener("keydown", onKey);
+      restoreFocus?.();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   async function share() {
     try {
@@ -40,8 +44,9 @@ export default function PosterSheet({ id, title, open, onClose }: { id: string; 
   return (
     <Presence show={open} enter="anim-fade-in" exit="anim-fade-out" duration={220}>
       <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
-        <button type="button" aria-label="关闭" className="absolute inset-0 bg-[rgba(8,14,15,0.55)] backdrop-blur-[3px]" onClick={onClose} />
+        <button type="button" tabIndex={-1} aria-label="关闭" className="absolute inset-0 bg-[rgba(8,14,15,0.55)] backdrop-blur-[3px]" onClick={onClose} />
         <div
+          ref={dialog}
           role="dialog"
           aria-modal="true"
           aria-label="分享海报"
@@ -50,7 +55,7 @@ export default function PosterSheet({ id, title, open, onClose }: { id: string; 
           <span className="mb-3 h-1 w-10 rounded-full bg-line-strong sm:hidden" aria-hidden="true" />
           <div className="mb-3 flex w-full items-center justify-between">
             <span className="text-[14px] font-semibold text-ink">分享海报</span>
-            <button type="button" onClick={onClose} className="grid size-8 place-items-center rounded-full text-ink-3 transition-colors hover:bg-bg-sunk hover:text-ink" aria-label="关闭">
+            <button ref={closeButton} type="button" onClick={onClose} className="grid size-11 place-items-center rounded-full text-ink-3 transition-colors hover:bg-bg-sunk hover:text-ink" aria-label="关闭">
               <IconClose size={16} />
             </button>
           </div>
@@ -73,12 +78,12 @@ export default function PosterSheet({ id, title, open, onClose }: { id: string; 
             <a
               href={src}
               download={`${SITE.mcpPrefix}-${id}.png`}
-              className="inline-flex h-10 flex-1 items-center justify-center gap-1.5 rounded-full bg-accent text-[13.5px] font-medium text-accent-contrast transition-colors hover:bg-accent-ink"
+              className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-full bg-accent text-[13.5px] font-medium text-accent-contrast transition-colors hover:bg-accent-ink"
             >
               <IconDownload size={15} /> 保存图片
             </a>
             {canShareFile && (
-              <button type="button" onClick={share} className="inline-flex h-10 flex-1 items-center justify-center gap-1.5 rounded-full border border-line-strong bg-surface text-[13.5px] font-medium text-ink transition-colors hover:border-ink-4">
+              <button type="button" onClick={share} className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-full border border-line-strong bg-surface text-[13.5px] font-medium text-ink transition-colors hover:border-ink-4">
                 <IconShare size={15} /> 分享
               </button>
             )}

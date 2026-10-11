@@ -129,12 +129,12 @@ export async function itemFeed(kind: ItemFeedKind, category: PublicApiCategoryKe
     )
     SELECT p.article_id AS id, p.title, p.summary, p.url, p.category, p.published_at, p.discovered_at, s.name AS source_name,
       p.research->'bibliography'->>'publishedDate' AS publication_date, clock.raw->'publicationTime' AS source_publication_time
-      ${includeContent ? sql`, p.channel, p.syndicate, a.language, a.x_post,
+      ${includeContent ? sql`, p.channel, (p.syndicate AND s.site_fulltext AND s.syndicate_fulltext) AS syndicate, a.language, a.x_post,
         CASE WHEN p.channel = 'x' THEN tr.body_text END AS zh_text, qt.text_zh AS quoted_zh,
         a.body_html, tr.body_html AS tr_html, tr.complete AS tr_complete` : sql``}
     FROM page JOIN publications p ON p.article_id = page.article_id JOIN sources s ON s.id = p.source_id
     LEFT JOIN articles clock ON clock.id=p.article_id
-    ${includeContent ? sql`LEFT JOIN articles a ON a.id = p.article_id AND p.syndicate
+    ${includeContent ? sql`LEFT JOIN articles a ON a.id = p.article_id AND p.syndicate AND s.site_fulltext AND s.syndicate_fulltext
       LEFT JOIN translations tr ON tr.article_id = p.article_id AND tr.lang = 'zh' AND tr.revision >= a.revision
       LEFT JOIN quote_translations qt ON p.channel = 'x' AND qt.tweet_id = substring(a.x_post->'quoted'->>'url' from '/status/([0-9]+)')` : sql``}
     ORDER BY coalesce(p.published_at, p.discovered_at) DESC, p.article_id DESC`;

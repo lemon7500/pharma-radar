@@ -1,10 +1,11 @@
+import { registerPublicCacheReset } from "./cache-permissions.ts";
 import type { FeedItemSummary } from "@aihot/contracts/site";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { REPO_ROOT } from "../config.ts";
 import { sql } from "../db.ts";
 import { cached } from "../lib/cache.ts";
-import { ITEM_COLUMNS, ITEM_FROM, selectedCondition, toFeedItemSummary, type ItemRow } from "./items.ts";
+import { ITEM_COLUMNS, ITEM_FROM, editorialSourceCondition, selectedCondition, toFeedItemSummary, type ItemRow } from "./items.ts";
 
 export interface TopicRow {
   slug: string;
@@ -24,6 +25,8 @@ const topicsCache = cached(
 );
 // Counts may lag by about a minute, like the public directory cache; item reads always check visibility.
 const countsCache = cached(queryTopicCounts, { freshMs: 60_000, maxStaleMs: 10 * 60_000 });
+
+registerPublicCacheReset(() => { topicsCache.clear(); countsCache.clear(); });
 
 /**
  * The topics (stable slugs, names, definitions, related topics) come from the industry pack
@@ -81,7 +84,7 @@ export function topicPageCounts(): Promise<TopicCount[]> {
 async function queryTopicCounts(): Promise<TopicCount[]> {
   const [topics, items] = await Promise.all([
     sql<Array<Pick<TopicRow, "slug" | "entity_id" | "tags">>>`SELECT slug, entity_id, tags FROM topics ORDER BY position`,
-    sql<{ tags: string[]; timeline_at: Date }[]>`SELECT p.tags, p.timeline_at FROM publications p WHERE p.visibility = 'public' AND p.selected`,
+    sql<{ tags: string[]; timeline_at: Date }[]>`SELECT p.tags, p.timeline_at FROM publications p WHERE p.visibility = 'public' AND ${editorialSourceCondition()} AND p.selected`,
   ]);
   const recentFrom = Date.now() - 30 * 86400_000;
   return topics.map((t) => {

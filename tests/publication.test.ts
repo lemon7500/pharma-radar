@@ -2,6 +2,7 @@
 // every exit, reports stop quoting withdrawn items, the hot board drops a withdrawn item at once, item
 // pages follow the site's rule, an early release keeps the selected ledger in order, a withdrawal
 // waiting behind an unreleased item leaves new snapshots at once, and snapshots answer conditional requests.
+import { MCP_TOOL_NAMES as MCP_NAMES } from "@aihot/contracts/mcp";
 import { config } from "@aihot/backend/config";
 import { CATEGORY_LABELS } from "@aihot/contracts/taxonomy";
 import { BASIS_LABELS, DOCUMENT_TYPES, type ResearchProfile } from "@aihot/contracts/research";
@@ -44,10 +45,10 @@ after(async () => {
 
 let n = 0;
 /** A selected article with full text and a summary. */
-async function article(): Promise<string> {
+async function article(sourceId = SOURCE): Promise<string> {
   n += 1;
   const { articleId } = await upsertMaterial({
-    sourceId: SOURCE, url: `https://example.com/${T}-${n}`, title: `Test ${n}`, bodyText: BODY, bodyHtml: `<p>${BODY}</p>`, bodyStatus: "ok", via: "fetch", publishedAt: new Date(),
+    sourceId, url: `https://example.com/${T}-${n}`, title: `Test ${n}`, bodyText: BODY, bodyHtml: `<p>${BODY}</p>`, bodyStatus: "ok", via: "fetch", publishedAt: new Date(),
   });
   await sql`INSERT INTO analyses (article_id, input_revision, origin, relevance, category, title_zh, summary_zh, reason_zh, score, selected)
             VALUES (${articleId}, 1, 'rule', 'pass', 'ai-pharma', ${`标题${n}-${T}`}, ${`SUMMARY-${n}-${T}`}, '理由', 90, true)`;
@@ -339,11 +340,16 @@ test("share images keep detail metadata and access rules while conditional reads
       assert.equal(response.status, 304);
       assert.equal(response.etag, etag);
     }
-    assert.equal(queries.length, 2);
+    assert.equal(queries.filter(q => /AS fingerprint FROM sources/.test(q)).length, 2, "one current permission check per conditional image request");
+    assert.equal(queries.length, 4, "two metadata reads and two lightweight permission checks");
     assert.ok(queries.every((q) => !/body_html|body_text|translations|fact_articles/.test(q)), "cards only load their public metadata");
   } finally { sql.options.debug = previous; }
   await sql`UPDATE publications SET visibility = 'summary-only' WHERE article_id = ${id}`;
   assert.equal((await get(paths[0]![0]!, { "if-none-match": paths[0]![1]! })).status, 304, "summary-only pages keep the same allowed share summary");
+  try {
+    await changeSourcePermission({ participation_mode: "isolated" });
+    for (const [path, etag] of paths) assert.equal((await get(path!, { "if-none-match": etag! })).status, 404, "cached share images cannot bypass current source isolation");
+  } finally { await changeSourcePermission({ participation_mode: "editorial" }); }
   await sql`UPDATE publications SET visibility = 'withdrawn' WHERE article_id = ${id}`;
   for (const [path, etag] of paths) assert.equal((await get(path!, { "if-none-match": etag! })).status, 404, "cached ETags never bypass current visibility");
 });
@@ -388,4 +394,228 @@ test("minimal sync projection preserves snapshot fields, pagination bindings and
   await setVisibility(id, { visibility: 'withdrawn', reason: 'sync test', version: 0 }, 'test');
   const removed = await getChanges(minimalChanges.cursor);
   assert.ok(removed.changes.some((c: any) => c.op === 'remove' && c.id === id));
+});
+
+async function changeSourcePermission(patch: Record<string, unknown>) {
+  const [source] = await sql<{ updated_at: Date }[]>`SELECT updated_at FROM sources WHERE id = ${SOURCE}`;
+  await updateSource(SOURCE, { patch, version: source!.updated_at.toISOString(), reason: "permission boundary fixture" }, "test");
+}
+
+test("withdrawing full-text permission takes effect in detail, Markdown, RSS and body search before republishing", async () => {
+  const id = await article();
+  await publishArticle(id, released());
+  const term = `FULLTEXT-${T}`;
+  assert.ok((await get(`/api/site/items/${id}`)).body.includes(term));
+  assert.ok((await get(`/items/${id}/markdown`)).body.includes(term));
+  assert.ok((await get("/feed/full.xml")).body.includes(term));
+  assert.ok((await get(`/api/v1/items?mode=all&q=${term}`)).body.includes(id));
+  assert.ok((await get(`/api/site/pool?tab=relevance&q=${term}`)).body.includes(id));
+  try {
+    await changeSourcePermission({ site_fulltext: false });
+    const [projection] = await sql<{ body_mode: string; syndicate: boolean }[]>`SELECT body_mode, syndicate FROM publications WHERE article_id = ${id}`;
+    assert.equal(projection!.body_mode, "full", "the worker has not re-derived this projection");
+    const detail = await get(`/api/site/items/${id}`);
+    assert.equal(detail.status, 200);
+    assert.equal(JSON.parse(detail.body).body, null);
+    assert.ok(detail.body.includes(`SUMMARY-${n}-${T}`), "licensed summaries remain readable");
+    assert.ok(!(await get(`/items/${id}/markdown`)).body.includes(term));
+    assert.ok(!(await get("/feed/full.xml")).body.includes(term));
+    assert.ok(!(await get(`/api/v1/items?mode=all&q=${term}`)).body.includes(id), "a stale body index cannot reveal matching text");
+    assert.ok(!(await get(`/api/site/pool?tab=relevance&q=${term}`)).body.includes(id));
+    assert.ok(!(await get(`/api/site/pool?tab=relevance&q=${term}%20FULLTEXT`)).body.includes(id), "the unsplit relevance path also enforces permission");
+  } finally {
+    await sql`UPDATE sources SET site_fulltext = true WHERE id = ${SOURCE}`;
+  }
+  assert.ok((await get(`/api/site/items/${id}`)).body.includes(term), "restoring current permission permits the still-valid projection");
+});
+
+test("withdrawing RSS redistribution keeps licensed website full text while full RSS immediately falls back to a summary", async () => {
+  const id = await article();
+  await publishArticle(id, released());
+  const term = `FULLTEXT-${T}`;
+  try {
+    await changeSourcePermission({ syndicate_fulltext: false });
+    assert.ok((await get(`/api/site/items/${id}`)).body.includes(term));
+    assert.ok((await get(`/items/${id}/markdown`)).body.includes(term));
+    const feed = (await get("/feed/full.xml")).body;
+    assert.ok(feed.includes(id) && !feed.includes(term));
+  } finally {
+    await sql`UPDATE sources SET syndicate_fulltext = true WHERE id = ${SOURCE}`;
+  }
+  assert.ok((await get("/feed/full.xml")).body.includes(term));
+});
+
+test("isolating a source hides stale projected items and old sync upserts before the queued republish without suppressing an independent source", async () => {
+  const controlSource = `${SOURCE}-permission-control`;
+  await sql`INSERT INTO sources (id, name, kind, tier, participation_mode, site_fulltext, syndicate_fulltext, next_fetch_at)
+    VALUES (${controlSource}, 'Permission control', 'rss', 'T1', 'editorial', true, true, '2100-01-01')`;
+  const cursor = JSON.parse((await get("/api/v1/selected/snapshot?limit=1000")).body).cursor;
+  const id = await article(), control = await article(controlSource);
+  await publishArticle(id, released());
+  await publishArticle(control, released());
+  const story = await storyFor(id);
+  const reportKey = "2099-12-30";
+  await sql`INSERT INTO reports (kind,key,window_start,window_end,content,generated_at,origin)
+    VALUES ('daily',${reportKey},now()-interval '1 day',now(),${sql.json({ sections: [{ label: 'Fixture', items: [
+      { itemId: id, title: 'Restricted fixture', summary: 'RESTRICTED-CITATION', sourceUrl: 'https://example.com/restricted', sourceName: 'Test' },
+      { itemId: control, title: 'Control fixture', summary: 'CONTROL-CITATION', sourceUrl: 'https://example.com/control', sourceName: 'Control' },
+    ] }], flashes: [] } as never)},now(),'manual')
+    ON CONFLICT (kind,key) DO UPDATE SET content=EXCLUDED.content`;
+  assert.ok((await get("/api/v1/items?mode=selected")).body.includes(id));
+  try {
+    await changeSourcePermission({ participation_mode: "isolated" });
+    const [projection] = await sql<{ visibility: string; selected: boolean }[]>`SELECT visibility,selected FROM publications WHERE article_id=${id}`;
+    assert.deepEqual({ ...projection! }, { visibility: "public", selected: true }, "the original public projection is intentionally still stale");
+    for (const url of ["/api/v1/items?mode=selected", "/api/v1/items?mode=all", "/api/v1/selected/snapshot?fields=default&limit=1000", "/api/v1/selected/snapshot?fields=minimal&limit=1000", "/feed.xml", "/feed/full.xml", "/feed/all.xml", "/api/site/pool"]) {
+      const response = await get(url);
+      assert.equal(response.status, 200, response.body);
+      assert.ok(!response.body.includes(id), `${url} still sends the isolated item`);
+      assert.ok(response.body.includes(control), `${url} unexpectedly suppresses the independent source`);
+    }
+    for (const url of [`/api/site/items/${id}`, `/api/site/items/${id}/original`, `/items/${id}/markdown`, `/api/site/stories/${story}`, `/api/v1/stories/${story}`]) {
+      assert.equal((await get(url)).status, 404, url);
+    }
+    const changed = await get(`/api/v1/selected/changes?limit=100&cursor=${encodeURIComponent(cursor)}`);
+    assert.equal(changed.status, 409);
+    assert.equal(JSON.parse(changed.body).code, "snapshot_required");
+    for (const url of [`/api/site/reports/daily/${reportKey}`, `/api/v1/dailies/${reportKey}`]) {
+      const response = await get(url);
+      assert.ok(!response.body.includes("RESTRICTED-CITATION") && response.body.includes("CONTROL-CITATION"), url);
+    }
+  } finally {
+    await changeSourcePermission({ participation_mode: "editorial" });
+    await sql`DELETE FROM reports WHERE kind = 'daily' AND key = ${reportKey}`;
+  }
+  assert.ok((await get("/api/v1/items?mode=selected")).body.includes(id), "restoring the source permits the unchanged public projection");
+  assert.equal((await get(`/api/site/items/${id}`)).status, 200);
+});
+
+test("temporary isolation and restoration before republishing invalidates both epochs without inventing ledger operations", async () => {
+  const prior = JSON.parse((await get("/api/v1/selected/snapshot?limit=1000")).body);
+  const id = await article();
+  await publishArticle(id, released());
+  const first = JSON.parse((await get("/api/v1/selected/snapshot?limit=1")).body);
+  assert.ok(first.nextPage, "fixture has enough selected rows to test continuation invalidation");
+  const [before] = await sql<{ seq: number; in_set: boolean; payload_hash: string }[]>`
+    SELECT st.in_set, st.payload_hash, (SELECT coalesce(max(seq),0)::int FROM selected_ledger WHERE article_id=${id}) AS seq
+    FROM selected_state st WHERE st.article_id=${id}`;
+  let isolatedCursor: string;
+  try {
+    await changeSourcePermission({ participation_mode: "isolated" });
+    assert.equal((await get(`/api/v1/selected/changes?cursor=${encodeURIComponent(prior.cursor)}`)).status, 409);
+    assert.equal((await get(`/api/v1/selected/changes?cursor=${encodeURIComponent(first.cursor)}`)).status, 409, "even a watermark past the old upsert must reset");
+    assert.equal((await get(`/api/v1/selected/snapshot?page=${encodeURIComponent(first.nextPage)}`)).status, 400);
+    const isolated = await get("/api/v1/selected/snapshot?limit=1000");
+    assert.ok(!isolated.body.includes(id));
+    isolatedCursor = JSON.parse(isolated.body).cursor;
+  } finally {
+    await changeSourcePermission({ participation_mode: "editorial" });
+  }
+  assert.equal((await get(`/api/v1/selected/changes?cursor=${encodeURIComponent(isolatedCursor!)}`)).status, 409, "the temporary empty snapshot cannot silently miss the restored item");
+  await republishSource(SOURCE);
+  const [after] = await sql<{ seq: number; in_set: boolean; payload_hash: string }[]>`
+    SELECT st.in_set, st.payload_hash, (SELECT coalesce(max(seq),0)::int FROM selected_ledger WHERE article_id=${id}) AS seq
+    FROM selected_state st WHERE st.article_id=${id}`;
+  assert.deepEqual({ ...after! }, { ...before! }, "restoration with an unchanged selected payload does not emit a compensating upsert");
+  const restored = await get("/api/v1/selected/snapshot?limit=1000");
+  assert.ok(restored.body.includes(id));
+  const changes = await get(`/api/v1/selected/changes?cursor=${encodeURIComponent(JSON.parse(restored.body).cursor)}`);
+  assert.equal(changes.status, 200);
+});
+
+test("current full-text permission also gates X text, translations and quoted posts on old website and Markdown exits", async () => {
+  const id = await article();
+  const text = `X-FULL-${T}`, quote = `X-QUOTE-${T}`, translated = `X-TRANSLATED-${T}`;
+  await sql`UPDATE articles SET x_post=${sql.json({ tweetId: '123456789', authorName: 'Fixture', handle: 'fixture', text,
+    quoted: { authorName: 'Quoted', handle: 'quoted', text: quote, url: 'https://x.com/quoted/status/123456788' } })} WHERE id=${id}`;
+  await sql`INSERT INTO translations (article_id,revision,body_html,body_text,origin) VALUES (${id},1,${'<p>'+translated+'</p>'},${translated},'source')`;
+  await publishArticle(id, released());
+  assert.ok((await get(`/api/site/items/${id}/original`)).body.includes(text));
+  assert.ok((await get(`/items/${id}/markdown`)).body.includes(quote));
+  try {
+    await changeSourcePermission({ site_fulltext: false });
+    const response = await get(`/api/site/items/${id}`);
+    assert.equal(response.status, 200);
+    assert.equal(JSON.parse(response.body).body, null);
+    assert.equal(JSON.parse(response.body).x, null);
+    for (const url of [`/api/site/items/${id}/original`, `/items/${id}/markdown`, "/api/site/pool"]) {
+      const body = (await get(url)).body;
+      assert.ok(!body.includes(text) && !body.includes(quote) && !body.includes(translated), url);
+    }
+  } finally { await changeSourcePermission({ site_fulltext: true }); }
+  assert.ok((await get(`/items/${id}/markdown`)).body.includes(text));
+});
+
+test("warmed public caches and conditional requests observe source permission changes across processes before republishing", async () => {
+  const controlSource = `${SOURCE}-cache-control`;
+  await sql`INSERT INTO sources (id,name,kind,tier,participation_mode,site_fulltext,syndicate_fulltext,next_fetch_at)
+    VALUES (${controlSource},'Cache control','rss','T1','editorial',true,true,'2100-01-01')`;
+  const id = await article(), control = await article(controlSource);
+  const stories = [await storyFor(id), await storyFor(control)];
+  await sql`UPDATE articles SET media=${sql.json([{ kind:'image',url:'https://example.com/permission-cover.png',width:800,height:600 }])} WHERE id IN (${id},${control})`;
+  await publishArticle(id, released()); await publishArticle(control, released());
+  const storyRows = await sql<{ id: number; public_id: string }[]>`SELECT id,public_id::text FROM stories WHERE public_id=ANY(${stories}::uuid[])`;
+  const reportKey = '2099-12-29', topic = `cache-permission-${T}`, topicTag = `permission:${T}`;
+  await sql`UPDATE publications SET tags=ARRAY[${topicTag}] WHERE article_id IN (${id},${control})`;
+  await sql`INSERT INTO topics (slug,name,grp,tags,definition,related,position) VALUES (${topic},'Permission cache','field',ARRAY[${topicTag}],'Fixture','{}',999)`;
+  await sql`INSERT INTO reports (kind,key,window_start,window_end,content,generated_at,origin)
+    VALUES ('daily',${reportKey},now()-interval '1 day',now(),${sql.json({ sections:[{label:'Fixture',items:[
+      { itemId:id,title:'CACHE-RESTRICTED-HEADLINE',summary:'CACHE-RESTRICTED-SUMMARY',sourceUrl:'https://example.com/restricted',sourceName:'Test' },
+      { itemId:control,title:'CACHE-CONTROL-HEADLINE',summary:'CACHE-CONTROL-SUMMARY',sourceUrl:'https://example.com/control',sourceName:'Control' },
+    ]}],flashes:[] } as never)},now(),'manual')`;
+  const entries = [id,control].map((item,i) => {
+    const story = storyRows.find(row=>row.public_id===stories[i])!;
+    return { rank:i+1,storyId:Number(story.id),storyPublicId:story.public_id,title:`CACHE-HOT-${i}-${T}`,heat:10,
+      trend:'flat',trendPct:0,badges:[],participantCount:1,sourceCount:1,signalCount:0,reportCount:1,
+      sourceNames:[i?'Cache control':'Test publication'],latestAt:new Date().toISOString(),firstReportAt:new Date().toISOString(),
+      representativeItemId:item,representativeUrl:'https://example.com/fixture',representativeSource:i?'Cache control':'Test publication',
+      participants:[{name:i?'Cache control':'Test publication',kind:'editorial',tier:'T1'}] };
+  });
+  const [ranking] = await sql<{ id:number }[]>`INSERT INTO hot_rankings (computed_at,rule_version,entries,published)
+    VALUES (now(),'permission-cache-fixture',${sql.json(entries)},true) RETURNING id`;
+  try {
+    const warmedHot = await get('/api/site/hot');
+    assert.ok(JSON.parse(warmedHot.body).entries.find((e:any)=>e.representative?.id===id)?.cover);
+    assert.ok((await get('/api/v1/hot-topics')).body.includes(id));
+    const warmedTopics = await get('/api/site/topics');
+    assert.equal(JSON.parse(warmedTopics.body).topics.find((t:any)=>t.slug===topic).total,2);
+    const warmedReports = await get('/api/v1/dailies');
+    assert.ok(warmedReports.body.includes('CACHE-RESTRICTED-HEADLINE'));
+    const warmedStats = await get('/api/site/stats'); assert.ok(warmedStats.body.includes(id));
+    const callMcp = async () => {
+      const response = await app.inject({ method:'POST',url:'/api/mcp',headers:{host:'localhost','content-type':'application/json',accept:'application/json, text/event-stream','mcp-protocol-version':'2025-03-26'},
+        payload:{jsonrpc:'2.0',id:1,method:'tools/call',params:{name:MCP_NAMES.latest,arguments:{mode:'selected',window:'24h',limit:30}}} });
+      assert.equal(response.statusCode,200,response.body); return response.body;
+    };
+    assert.ok((await callMcp()).includes(id));
+    const warmedSitemap = await get('/sitemap.xml'); assert.ok(warmedSitemap.body.includes(id));
+    // Simulate a second process: no in-process updateSource callback, only persisted permission changes.
+    await sql`UPDATE sources SET site_fulltext=false,updated_at=clock_timestamp() WHERE id=${SOURCE}`;
+    const withoutPicture = JSON.parse((await get('/api/site/hot', {'if-none-match':warmedHot.etag!})).body);
+    assert.equal(withoutPicture.entries.find((e:any)=>e.representative?.id===id)?.cover,null);
+    assert.ok(withoutPicture.entries.find((e:any)=>e.representative?.id===control)?.cover);
+    await changeSourcePermission({ site_fulltext:true });
+    const restoredPicture = JSON.parse((await get('/api/site/hot')).body);
+    assert.ok(restoredPicture.entries.find((e:any)=>e.representative?.id===id)?.cover);
+    await changeSourcePermission({ participation_mode:'isolated' });
+    for (const url of ['/api/site/hot','/api/v1/hot-topics']) {
+      const response = await get(url); assert.ok(!response.body.includes(id) && response.body.includes(control),url);
+    }
+    const topics = await get('/api/site/topics', {'if-none-match':warmedTopics.etag!});
+    assert.equal(topics.status,200); assert.equal(JSON.parse(topics.body).topics.find((t:any)=>t.slug===topic).total,1);
+    const reports = await get('/api/v1/dailies', {'if-none-match':warmedReports.etag!});
+    assert.equal(reports.status,200); assert.ok(!reports.body.includes('CACHE-RESTRICTED-HEADLINE') && reports.body.includes('CACHE-CONTROL-HEADLINE'));
+    const stats = await get('/api/site/stats', {'if-none-match':warmedStats.etag!});
+    assert.equal(stats.status,200); assert.ok(!stats.body.includes(id) && stats.body.includes(control));
+    const mcp = await callMcp(); assert.ok(!mcp.includes(id) && mcp.includes(control),"a warmed MCP answer cannot outlive source isolation");
+    const sitemap = await get('/sitemap.xml', {'if-none-match':warmedSitemap.etag!});
+    assert.equal(sitemap.status,200); assert.ok(!sitemap.body.includes(id) && sitemap.body.includes(control));
+    const [sameRanking] = await sql<{ id:number }[]>`SELECT id FROM hot_rankings WHERE published ORDER BY computed_at DESC LIMIT 1`;
+    assert.equal(sameRanking!.id,ranking!.id,"all read boundaries changed without a new ranking or republish");
+  } finally {
+    await changeSourcePermission({ participation_mode:'editorial',site_fulltext:true });
+    await sql`DELETE FROM hot_rankings WHERE id=${ranking!.id}`;
+    await sql`DELETE FROM reports WHERE kind='daily' AND key=${reportKey}`;
+    await sql`DELETE FROM topics WHERE slug=${topic}`;
+  }
 });

@@ -166,8 +166,8 @@
   --accent-softer: rgba(18, 204, 216, 0.06);
   --accent-contrast: #000000;
   --note: #8fb8a8;
-  --hot: #d86a52;
-  --hot-soft: rgba(216, 106, 82, 0.12);
+  --hot: #e68670;
+  --hot-soft: rgba(230, 134, 112, 0.12);
   --amber: #d3b26a;
   --amber-ink: #d3b26a;
   --amber-soft: rgba(211, 178, 106, 0.12);
@@ -606,6 +606,7 @@
 .report-nameplate strong { font-size:clamp(24px,4vw,48px); letter-spacing:-.04em; line-height:1.15; }
 .report-nameplate>span { font-size:clamp(20px,2.5vw,32px); color:var(--accent-ink); line-height:1.4; }
 .reading-list-page { max-width:1000px; margin:auto; }
+.reading-list-page h2 { overflow-wrap:anywhere; }
 .reading-list-page button { min-height:44px; }
 .reading-list-page article { border-radius:0; background:transparent; box-shadow:none; border-width:0 0 1px; }
 /* Pharma Radar v2 editorial shell and independent reader layouts. */

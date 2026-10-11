@@ -45,6 +45,8 @@ export interface ItemRow {
   source_kind: SourceKind;
   /** Participation mode of the source now (editorial, hot_signal, isolated). */
   source_mode: string;
+  /** Current source permission, also applied to X text and quoted posts. */
+  source_site_fulltext?: boolean;
   source_icon: string | null;
   x_post: Record<string, any> | null;
   author: string | null;
@@ -62,11 +64,13 @@ export const ITEM_COLUMNS = sql`
   p.research, p.index_only, a.raw->'publicationTime' AS source_publication_time,
   p.article_id AS id, p.revision, p.title, p.original_title, p.summary, p.reason, p.category, p.tags, p.score,
   p.selected, p.eligible, p.channel, p.url, p.published_at, p.discovered_at, p.timeline_at, p.sort_at, p.first_party, p.visibility,
-  p.body_mode, p.syndicate, p.indexable, p.visible_after, p.backfill, p.fact_id, p.story_id,
-  s.id AS source_id, s.name AS source_name, s.kind AS source_kind, s.participation_mode AS source_mode, s.icon_url AS source_icon,
-  a.x_post, a.author, a.language,
+  CASE WHEN s.site_fulltext THEN p.body_mode ELSE 'summary' END AS body_mode,
+  (p.syndicate AND s.site_fulltext AND s.syndicate_fulltext) AS syndicate, p.indexable, p.visible_after, p.backfill, p.fact_id, p.story_id,
+  s.id AS source_id, s.name AS source_name, s.kind AS source_kind, s.participation_mode AS source_mode, s.site_fulltext AS source_site_fulltext, s.icon_url AS source_icon,
+  CASE WHEN s.site_fulltext THEN a.x_post END AS x_post, a.author, a.language,
   st.public_id::text AS story_public_id, st.title AS story_title,
-  CASE WHEN p.channel = 'x' THEN tr.body_text END AS zh_text, qt.text_zh AS quoted_zh`;
+  CASE WHEN p.channel = 'x' AND s.site_fulltext THEN tr.body_text END AS zh_text,
+  CASE WHEN s.site_fulltext THEN qt.text_zh END AS quoted_zh`;
 
 /** Public API listings never render article bodies, X media or story metadata. */
 export type ApiItemRow = Pick<ItemRow, "id" | "title" | "original_title" | "summary" | "source_name" | "url" | "published_at" | "discovered_at" | "category" | "score" | "selected" | "reason" | "source_publication_time"> & { publication_date?: string | null };
@@ -79,22 +83,27 @@ export const API_ITEM_FROM = sql`FROM publications p JOIN sources s ON s.id = p.
 /** A translation of an older revision is left out: the original changed after it (the worker translates it again). */
 export const ITEM_FROM = sql`
   FROM publications p
-  JOIN sources s ON s.id = p.source_id
+  JOIN sources s ON s.id = p.source_id AND s.participation_mode = 'editorial'
   JOIN articles a ON a.id = p.article_id
   LEFT JOIN stories st ON st.id = p.story_id AND st.merged_into IS NULL
   LEFT JOIN translations tr ON tr.article_id = p.article_id AND tr.lang = 'zh' AND tr.revision >= a.revision
   LEFT JOIN quote_translations qt ON p.channel = 'x' AND qt.tweet_id = substring(a.x_post->'quoted'->>'url' from '/status/([0-9]+)')`;
 
+/** Source reductions take effect before the background projection/ledger republish runs. */
+export function editorialSourceCondition() {
+  return sql`EXISTS (SELECT 1 FROM sources current_source WHERE current_source.id = p.source_id AND current_source.participation_mode = 'editorial')`;
+}
+
 /** Listed items: public, and a selected item only after its release gate. */
 export function listedCondition(now: Date) {
   // Promoting an already-public index does not remove it from the library while
   // its new selected release waits for grouping. Selected-only exits keep their gate.
-  return sql`p.visibility = 'public' AND (NOT p.selected OR p.visible_after <= ${now} OR p.first_public_at <= ${now})`;
+  return sql`p.visibility = 'public' AND ${editorialSourceCondition()} AND (NOT p.selected OR p.visible_after <= ${now} OR p.first_public_at <= ${now})`;
 }
 
 /** Selected set as shown on the home timeline, v1 selected mode and RSS. */
 export function selectedCondition(now: Date) {
-  return sql`p.visibility = 'public' AND p.selected AND p.visible_after <= ${now}`;
+  return sql`p.visibility = 'public' AND ${editorialSourceCondition()} AND p.selected AND p.visible_after <= ${now}`;
 }
 
 export function channelCondition(channel: ChannelKey | null | undefined) {

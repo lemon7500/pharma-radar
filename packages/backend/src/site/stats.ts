@@ -2,6 +2,7 @@
 // ten minutes per process (the page itself is cached for five); an older copy is served while the
 // counts are read again, so no reader waits for the full-table counts.
 import type { SiteStats } from "@aihot/contracts/site";
+import { registerPublicCacheReset } from "../publication/cache-permissions.ts";
 import { sql } from "../db.ts";
 import { cached } from "../lib/cache.ts";
 import { selectedCondition } from "../publication/items.ts";
@@ -12,6 +13,8 @@ export type { SiteStats };
 const SAMPLE = 180;
 
 const stats = cached(() => querySiteStats(new Date()), { freshMs: 10 * 60_000, maxStaleMs: 60 * 60_000 });
+
+registerPublicCacheReset(() => stats.clear());
 
 export function loadSiteStats(): Promise<SiteStats> {
   return stats.get();

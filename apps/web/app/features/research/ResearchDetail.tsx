@@ -11,7 +11,7 @@ import { publicationTime, publicationLabel } from "@aihot/contracts/publication-
 const PosterSheet = lazy(() => import("../item/PosterSheet"));
 export function ResearchDetail({ item }: { item:SiteItemDetail }) {
   const navigate = useNavigate(); const [message,setMessage] = useState(""); const [poster,setPoster] = useState(false);
-  useEffect(() => markRead(item.id),[item.id]);
+  useEffect(() => { if (!markRead(item.id)) setMessage("浏览器存储已满或不可用，已读状态未能保存。你仍可继续阅读。"); },[item.id]);
   const index = item.contentStage === "index";
   const title = index ? item.originalTitle || item.title : item.title;
   const r = !index && item.readingMode === "summary-only" ? null : item.research;

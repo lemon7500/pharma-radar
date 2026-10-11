@@ -16,15 +16,16 @@ export function cached<T>(load: () => Promise<T>, opts: { freshMs: number; maxSt
   const refresh = (): Promise<T> => {
     if (pending) return pending;
     const mine = generation;
-    pending = load()
+    const loadPending = load()
       .then((data) => {
         if (mine === generation) value = { at: Date.now(), data };
         return data;
       })
       .finally(() => {
-        pending = null;
+        if (pending === loadPending) pending = null;
       });
-    return pending;
+    pending = loadPending;
+    return loadPending;
   };
 
   return {

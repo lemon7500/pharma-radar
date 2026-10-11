@@ -2,6 +2,7 @@
 // the latest 500 stories, leaderboard pages and indexable items. Cached ~5 minutes and rebuilt in the
 // background after that (crawlers get the previous copy meanwhile); if the database fails, the last
 // successful sitemap is served (never an empty one). Bounded.
+import { registerPublicCacheReset } from "./cache-permissions.ts";
 import { FEATURES } from "@aihot/industry/features";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -11,6 +12,7 @@ import { cached } from "../lib/cache.ts";
 import { escapeXml } from "../lib/text.ts";
 import { siteUrl } from "./links.ts";
 import { leaderboardUrls } from "../leaderboard/read.ts";
+import { editorialSourceCondition } from "./items.ts";
 import { topicPageCounts } from "./topics.ts";
 
 async function leaderboardDetailUrls(): Promise<string[]> {
@@ -23,6 +25,8 @@ const TTL_MS = 5 * 60 * 1000;
 const CACHE_FILE = path.join(config.dataDir, "sitemap-last.xml");
 
 let lastGood: string | null = null;
+let sitemapGeneration = 0;
+let allowDiskFallback = true;
 
 interface Entry {
   loc: string;
@@ -33,7 +37,7 @@ interface Entry {
 
 async function build(): Promise<string> {
   const entries: Entry[] = [];
-  const [latestItem] = await sql<{ t: Date | null }[]>`SELECT max(timeline_at) AS t FROM publications WHERE visibility = 'public' AND selected`;
+  const [latestItem] = await sql<{ t: Date | null }[]>`SELECT max(p.timeline_at) AS t FROM publications p WHERE p.visibility = 'public' AND p.selected AND ${editorialSourceCondition()}`;
   const [latestDaily] = await sql<{ key: string | null; t: Date | null }[]>`SELECT max(key) AS key, max(generated_at) AS t FROM reports WHERE kind = 'daily'`;
   const now = latestItem?.t ?? new Date();
   entries.push(
@@ -72,13 +76,13 @@ async function build(): Promise<string> {
   const stories = await sql<{ public_id: string; latest_at: Date | null }[]>`
     SELECT public_id::text, latest_at FROM stories WHERE merged_into IS NULL AND EXISTS (
       SELECT 1 FROM facts f JOIN fact_articles fa ON fa.fact_id = f.id JOIN publications p ON p.article_id = fa.article_id
-      WHERE f.story_id = stories.id AND fa.role IN ('primary', 'report') AND p.visibility = 'public' AND p.eligible)
+      WHERE f.story_id = stories.id AND fa.role IN ('primary', 'report') AND p.visibility = 'public' AND p.eligible AND ${editorialSourceCondition()})
     ORDER BY latest_at DESC NULLS LAST LIMIT 500`;
   for (const s of stories) entries.push({ loc: `/story/${s.public_id}`, lastmod: s.latest_at, changefreq: "daily", priority: 0.5 });
   // Model pages exist only for models on a public top-30 board; source pages for every registered source.
   if (FEATURES.leaderboard) for (const loc of await leaderboardDetailUrls()) entries.push({ loc, changefreq: "weekly", priority: 0.4 });
   const items = await sql<{ id: string; t: Date }[]>`
-    SELECT article_id AS id, updated_at AS t FROM publications WHERE visibility = 'public' AND indexable ORDER BY timeline_at DESC LIMIT ${MAX_URLS - entries.length}`;
+    SELECT p.article_id AS id, p.updated_at AS t FROM publications p WHERE p.visibility = 'public' AND p.indexable AND ${editorialSourceCondition()} ORDER BY p.timeline_at DESC LIMIT ${MAX_URLS - entries.length}`;
   for (const it of items) entries.push({ loc: `/items/${it.id}`, lastmod: it.t, changefreq: "monthly", priority: 0.5 });
 
   const body = entries
@@ -96,20 +100,24 @@ async function build(): Promise<string> {
 
 const sitemap = cached(refreshSitemap, { freshMs: TTL_MS, maxStaleMs: 60 * 60_000 });
 
+registerPublicCacheReset(() => { sitemapGeneration++; sitemap.clear(); lastGood = null; allowDiskFallback = false; });
+
 export function sitemapXml(): Promise<string> {
   return sitemap.get();
 }
 
 async function refreshSitemap(): Promise<string> {
+  const mine = sitemapGeneration;
   try {
     const xml = await build();
+    if (mine !== sitemapGeneration) return xml;
     lastGood = xml;
     await mkdir(path.dirname(CACHE_FILE), { recursive: true });
     await writeFile(CACHE_FILE, xml).catch(() => {});
     return xml;
   } catch (error) {
     if (lastGood) return lastGood;
-    const last = await readFile(CACHE_FILE, "utf8").catch(() => null);
+    const last = allowDiskFallback ? await readFile(CACHE_FILE, "utf8").catch(() => null) : null;
     if (last) return last;
     throw error;
   }

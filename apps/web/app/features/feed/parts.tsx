@@ -55,9 +55,10 @@ export function MediaThumbs({ media, className = "" }: { media: MediaView[]; cla
 export function StarButton({ item, size = 26, className = "" }: { item: Pick<FeedItemSummary, "id" | "title" | "summary" | "source" | "publishedAt" | "score" | "selected"> & Partial<Pick<FeedItemSummary,"publicationTime">>; size?: number; className?: string }) {
   const starred = useIsStarred(item.id);
   const [pulse, setPulse] = useState(0);
+  const [storageError, setStorageError] = useState(false);
   const on = starred;
   return (
-    <button
+    <><button
       type="button"
       aria-pressed={on}
       aria-label={on ? "取消收藏" : "收藏"}
@@ -71,14 +72,19 @@ export function StarButton({ item, size = 26, className = "" }: { item: Pick<Fee
           ...(item.publicationTime?.precision === "day" ? {publishedDate:item.publicationTime.date} : {}),
           ...(item.publicationTime ? {publicationTime:item.publicationTime} : {}),
         });
-        if (added) setPulse((p) => p + 1);
+        setStorageError(added === null);
+        if (added === true) setPulse((p) => p + 1);
       }}
-      style={{ width: size, height: size }}
+      style={{ width: Math.max(44, size), height: Math.max(44, size) }}
       className={`relative z-10 inline-flex shrink-0 items-center justify-center rounded-control transition-colors duration-150 ${on ? "text-accent" : "text-ink-4 hover:bg-bg-sunk hover:text-ink-2"} ${className}`}
     >
       <span key={pulse} className={`flex ${pulse ? "anim-bump" : ""}`}>
         <IconBookmark size={Math.round(size * 0.6)} filled={on} />
       </span>
     </button>
+    {storageError && <div role="alert" className="fixed bottom-[calc(80px+env(safe-area-inset-bottom))] left-4 right-4 z-[70] mx-auto flex max-w-md items-center gap-3 rounded-tile border border-line bg-surface px-4 py-3 text-[13px] text-hot shadow-[var(--shadow-pop)] lg:bottom-6">
+      <p className="flex-1">浏览器存储已满或不可用，收藏状态未能保存。请检查浏览器存储后重试。</p>
+      <button type="button" aria-label="关闭收藏错误提示" onClick={() => setStorageError(false)} className="min-h-11 shrink-0 px-2">关闭</button>
+    </div>}</>
   );
 }

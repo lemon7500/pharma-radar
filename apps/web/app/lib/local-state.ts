@@ -1,6 +1,5 @@
 // Reader records stay in this browser; the reading list separately queries public status by item ID.
-// Storage failures degrade
-// silently. Keep the keys and formats once readers have data under them.
+// Keep the keys and formats once readers have data under them. Reader actions report failed writes.
 import { useSyncExternalStore } from "react";
 import { beijingDate, isValidDate } from "@aihot/contracts/time";
 import { publicationTime, type PublicationTime } from "@aihot/contracts/publication-time";
@@ -176,18 +175,20 @@ export function isStarred(id: string): boolean {
   return starredSetCache.ids.has(id);
 }
 
-export function toggleStar(item: Omit<LocalStarredItem, "savedAt">): boolean {
+/** Returns the resulting saved state, or null when storage rejected the change. */
+export function toggleStar(item: Omit<LocalStarredItem, "savedAt">): boolean | null {
   const list = getStarred();
   const exists = list.some((s) => s.id === item.id);
   const next = exists ? list.filter((s) => s.id !== item.id) : [{ ...item, savedAt: new Date().toISOString() }, ...list].slice(0, STARRED_LIMIT);
-  writeRaw(KEYS.starred, JSON.stringify(next));
+  if (!writeRaw(KEYS.starred, JSON.stringify(next))) return null;
   invalidate(KEYS.starred);
   return !exists;
 }
 
-export function removeStar(id: string) {
-  writeRaw(KEYS.starred, JSON.stringify(getStarred().filter((s) => s.id !== id)));
+export function removeStar(id: string): boolean {
+  if (!writeRaw(KEYS.starred, JSON.stringify(getStarred().filter((s) => s.id !== id)))) return false;
   invalidate(KEYS.starred);
+  return true;
 }
 
 // --- read items (LRU, newest first) ---
@@ -214,13 +215,14 @@ export function getReadSet(): Set<string> {
   return readSetCache.set;
 }
 
-export function markRead(id: string) {
-  if (!ID_PATTERN.test(id)) return;
+export function markRead(id: string): boolean {
+  if (!ID_PATTERN.test(id)) return false;
   const ids = getReadIds();
-  if (ids[0] === id) return;
+  if (ids[0] === id) return true;
   const next = [id, ...ids.filter((v) => v !== id)].slice(0, READ_LIMIT);
-  writeRaw(KEYS.read, JSON.stringify(next));
+  if (!writeRaw(KEYS.read, JSON.stringify(next))) return false;
   invalidate(KEYS.read);
+  return true;
 }
 
 // --- theme ---

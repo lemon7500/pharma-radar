@@ -1,5 +1,6 @@
 // Stories (events) and the hot ranking through the public read layer. The website sees heat values;
 // v1 / MCP / Skill only see ranks and counts.
+import { registerPublicCacheReset } from "./cache-permissions.ts";
 import type { HeatPoint, HotResponse, StoryDetail, StoryReportView } from "@aihot/contracts/site";
 import { sql } from "../db.ts";
 import { proxiedImage, proxiedImageSet } from "../media/imgproxy.ts";
@@ -198,18 +199,22 @@ type HotCoverMap = Map<number, { url: string; width: number | null; height: numb
 let coversCache: { rankingId: number; covers: HotCoverMap } | null = null;
 const coversPending = new Map<number, Promise<HotCoverMap>>();
 
+let coversGeneration = 0;
+registerPublicCacheReset(() => { coversGeneration++; coversCache = null; coversPending.clear(); });
+
 /** A picture per story from its public full-text reports, the representative first, wide enough for a card. */
 async function hotCovers(rankingId: number, entries: Array<{ storyId: number; representativeItemId: string | null }>, at: Date) {
   if (coversCache?.rankingId === rankingId) return coversCache.covers;
   const pending = coversPending.get(rankingId);
   if (pending) return pending;
+  const mine = coversGeneration;
   const load = queryHotCovers(entries, at);
   coversPending.set(rankingId, load);
   try {
     const covers = await load;
-    coversCache = { rankingId, covers };
+    if (mine === coversGeneration) coversCache = { rankingId, covers };
     return covers;
-  } finally { coversPending.delete(rankingId); }
+  } finally { if (coversPending.get(rankingId) === load) coversPending.delete(rankingId); }
 }
 
 async function queryHotCovers(entries: Array<{ storyId: number; representativeItemId: string | null }>, at: Date) {
@@ -218,6 +223,7 @@ async function queryHotCovers(entries: Array<{ storyId: number; representativeIt
   const rows = await sql<{ story_id: number; m: { url: string; width?: number; height?: number } }[]>`
     SELECT DISTINCT ON (p.story_id) p.story_id, img.m
     FROM publications p JOIN articles a ON a.id = p.article_id
+    JOIN sources current_source ON current_source.id=p.source_id AND current_source.participation_mode='editorial' AND current_source.site_fulltext
     CROSS JOIN LATERAL (
       SELECT m FROM jsonb_array_elements(coalesce(a.media, '[]'::jsonb)) m
       WHERE m->>'kind' = 'image' AND coalesce((m->>'width')::numeric, 800) >= 480 LIMIT 1

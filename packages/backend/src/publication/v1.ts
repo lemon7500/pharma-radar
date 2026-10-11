@@ -86,17 +86,14 @@ export class SnapshotRequiredError extends Error {}
 
 const SYNC_PREFIX = "ax1"; // any other watermark answers 409
 
-let epochCache: string | null = null;
-
-/** Ledger epoch: changes whenever the ledger is rebuilt (e.g. after an import), invalidating old watermarks. */
+/** Read the current epoch on every sync request: a source edit may invalidate it in another process. */
 export async function ledgerEpoch(): Promise<string> {
-  if (epochCache) return epochCache;
   const [row] = await sql<{ value: { epoch: string } }[]>`SELECT value FROM settings WHERE key = 'selected_ledger_epoch'`;
-  if (row) return (epochCache = row.value.epoch);
+  if (row) return row.value.epoch;
   const epoch = newShortId(6);
   await sql`INSERT INTO settings (key, value) VALUES ('selected_ledger_epoch', ${sql.json({ epoch })}) ON CONFLICT (key) DO NOTHING`;
   const [again] = await sql<{ value: { epoch: string } }[]>`SELECT value FROM settings WHERE key = 'selected_ledger_epoch'`;
-  return (epochCache = again!.value.epoch);
+  return again!.value.epoch;
 }
 
 /** Highest sequence whose entries (and all earlier ones) have passed the release gate. */
@@ -170,6 +167,8 @@ export async function selectedSnapshot(q: SnapshotQuery, now = new Date()) {
       ORDER BY article_id, seq DESC
     ) latest
     JOIN selected_state st ON st.article_id = latest.article_id AND st.in_set
+    JOIN publications current_publication ON current_publication.article_id = latest.article_id
+    JOIN sources current_source ON current_source.id = current_publication.source_id AND current_source.participation_mode = 'editorial'
     WHERE latest.op = 'upsert'
     ORDER BY latest.article_id
     LIMIT ${q.limit + 1}`;
@@ -212,6 +211,13 @@ export async function selectedChanges(q: { cursor: string; limit: number }, now 
   const page = rows.slice(0, q.limit);
   const hasMore = rows.length > q.limit;
   const nextW = page.length ? page[page.length - 1]!.seq : Math.max(c.w, 0);
+  // A source may change after the epoch read. Require a new snapshot without advancing
+  // the cursor; the stored ledger remains the only authority for upsert/remove operations.
+  const upsertIds = page.filter(r => r.op === "upsert").map(r => r.article_id);
+  const permitted = new Set(upsertIds.length ? (await sql<{ id: string }[]>`
+    SELECT p.article_id AS id FROM publications p JOIN sources s ON s.id = p.source_id
+    WHERE p.article_id = ANY(${upsertIds}::text[]) AND s.participation_mode = 'editorial'`).map(row => row.id) : []);
+  if (upsertIds.some(id => !permitted.has(id))) throw new SnapshotRequiredError("source membership changed");
   const hydrated = await withLegacyPublicationTimes(page.filter(r => r.op === "upsert").map(r => r.payload!), now);
   let upsertIndex = 0;
   return {

@@ -5,6 +5,7 @@ import { OAUTH_PROBE_PATHS, resolveRedirect } from "@aihot/contracts/http-policy
 import { securityHeaders } from "@aihot/contracts/security-headers";
 import { config } from "@aihot/backend/config";
 import { sql } from "@aihot/backend/db";
+import { sourceDependentPublicRoute, syncPublicPermissions } from "@aihot/backend/publication/cache-permissions";
 import { registerSite } from "./routes/site.ts";
 import { registerLeaderboard } from "./routes/leaderboard.ts";
 import { registerOg } from "./routes/og.ts";
@@ -61,6 +62,12 @@ export async function buildApp(): Promise<FastifyInstance> {
       if (decision.location) return reply.code(decision.status).header("Location", decision.location).send();
       return reply.code(decision.status).type("text/plain; charset=utf-8").send(decision.status === 410 ? "Gone" : "Not found");
     }
+  });
+
+  // Run only for matched routes that derive public content from sources. Failures reach
+  // the existing 503/no-store error handler, never an old cache or conditional 304.
+  app.addHook("preHandler", async (req) => {
+    if (sourceDependentPublicRoute(req.method, req.routeOptions.url ?? "")) await syncPublicPermissions();
   });
 
   app.get("/api/health", async (_req, reply) => {

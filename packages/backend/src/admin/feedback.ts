@@ -69,12 +69,13 @@ export async function feedbackScreenshot(id: number): Promise<string | null> {
 /** Removes the sender's material (text, email, page, screenshot) and keeps only the handling record. */
 export async function eraseFeedback(id: number, reason: string, actor: string) {
   if (!reason.trim()) throw new Error("reason is required");
-  const [row] = await sql<{ screenshot_key: string | null; screenshot_remote: boolean | null }[]>`SELECT screenshot_key, screenshot_remote FROM feedback WHERE id = ${id}`;
+  const [row] = await sql<{ screenshot_key: string | null; screenshot_cleanup_key: string | null; screenshot_remote: boolean | null }[]>`SELECT screenshot_key, screenshot_cleanup_key, screenshot_remote FROM feedback WHERE id = ${id}`;
   if (!row) return null;
   const file = screenshotPath(row.screenshot_key);
-  if (file) await removeDurableFile(`feedback-screenshots/${path.basename(file)}`, { requireRemote: row.screenshot_remote ?? config.environmentName === "production" });
+  const storageKey = row.screenshot_cleanup_key ?? (file ? `feedback-screenshots/${path.basename(file)}` : null);
+  if (storageKey) await removeDurableFile(storageKey, { requireRemote: row.screenshot_remote ?? config.environmentName === "production" });
   await sql.begin(async (tx) => {
-    await tx`UPDATE feedback SET content = '（已按要求删除）', email = NULL, page_url = NULL, screenshot_key = NULL, screenshot_bytes = 0, updated_at = now() WHERE id = ${id}`;
+    await tx`UPDATE feedback SET content = '（已按要求删除）', email = NULL, page_url = NULL, screenshot_key = NULL, screenshot_cleanup_key = NULL, screenshot_bytes = 0, updated_at = now() WHERE id = ${id}`;
     await tx`DELETE FROM feedback_submission_receipts WHERE feedback_id = ${id}`;
   });
   await audit(actor, "feedback.erase", `feedback:${id}`, reason, null, null);
