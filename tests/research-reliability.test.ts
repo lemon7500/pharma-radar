@@ -161,3 +161,33 @@ test('pagination duplicates, empty tail, failures and source-query changes keep 
  const changed={...saved,config:{...source.config,url:source.config.url.replace('query=drug','query=cancer')}};
  const urls:string[]=[];await fetchEuropePmc(changed,{now:Date.parse('2026-10-03'),read:async url=>{urls.push(url);return page(1,0,null,0);}});assert.equal(new URL(urls[0]!).searchParams.get('cursorMark'),'*');assert.ok(urls.every(u=>new URL(u).searchParams.get('query')!.startsWith('cancer')));
 });
+
+test('completed plural animal models and molecular dynamics simulations retain explicitly supported stages',()=>{
+ const cases=[
+  {value:'animal',quote:'In animal models, the therapeutic formulation achieved tumour suppression while reducing drug toxicity compared with the untreated controls.'},
+  {value:'animal',quote:'In animal models, the therapeutic formulation achieved tumour suppression and reduced measured toxicity, effects that could inform further drug development.'},
+  {value:'computational',quote:'Molecular dynamics simulations indicated stable binding between the drug candidate and its protein target under the evaluated conditions.'},
+ ];
+ for(const {value,quote} of cases){
+  const result=validateResearchExtraction({evidenceStages:[{value,quote}]},{title:'Drug development study',bodyText:quote,bibliography});
+  assert.deepEqual(result.profile.evidenceStages,[value]);assert.equal(result.support[`evidenceStages.${value}`],quote);
+  assert.equal(result.rejections[`evidenceStages.${value}`],undefined);
+ }
+});
+test('prospective, negated and unperformed plural stage phrases cannot turn plans or cultured cells into completed evidence',()=>{
+ const cases=[
+  {value:'animal',quote:'In future studies, animal models will be used to assess whether the therapeutic formulation reduces tumour growth.'},
+  {value:'animal',quote:'No animal models were tested to assess whether the therapeutic formulation reduces tumour growth under the evaluated conditions.'},
+  {value:'animal',quote:'Animal models have not yet been evaluated to assess the pharmacological effects of the therapeutic formulation.'},
+  {value:'animal',quote:'Mouse-derived cells were tested in culture to inform future animal models of therapeutic response and drug toxicity.'},
+  {value:'computational',quote:'Molecular dynamics simulations are planned to assess the stability of the drug candidate and its protein target.'},
+  {value:'computational',quote:'Molecular dynamics simulations were not performed to assess the drug candidate and its binding to the target protein.'},
+  {value:'computational',quote:'Molecular dynamics simulations remain to be performed to assess the drug candidate and its binding to the target protein.'},
+  {value:'computational',quote:'Molecular dynamics simulations may indicate stable binding between the drug candidate and its protein target in future work.'},
+ ];
+ for(const {value,quote} of cases){
+  const result=validateResearchExtraction({evidenceStages:[{value,quote}]},{title:'Drug development study',bodyText:quote,bibliography});
+  assert.deepEqual(result.profile.evidenceStages,[],quote);assert.equal(result.support[`evidenceStages.${value}`],undefined);
+  assert.equal(result.rejections[`evidenceStages.${value}`],'stage-not-supported');
+ }
+});

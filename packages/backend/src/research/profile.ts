@@ -124,6 +124,20 @@ const stagePatterns: Record<string, RegExp> = {
 };
 const completedAssay = /\b(?:measured|assessed|determined|confirmed|validated|performed|observed|revealed|showed|yielded)\b/i;
 const incompleteAssay = /\b(?:planned|proposed|pending|awaiting|awaits?|remains?|remained)\b|\bto\s+be\b|\b(?:no|not|never|cannot|\w+n['’]t)\b.*\b(?:measured|assessed|determined|confirmed|validated|performed|observed|revealed|showed|yielded)\b/i;
+/** Plural phrases need a completed result, rather than broadening a keyword to future plans. */
+function completedPluralStage(value: string, quote: string): boolean {
+  const plural = value === "animal" ? /\banimal models\b/i
+    : value === "computational" ? /\bmolecular dynamics simulations\b/i : null;
+  if (!plural) return false;
+  return quote.split(/[.!?。；;]/).some(sentence => {
+    // A later possible benefit does not erase an already reported experiment or result.
+    const current = currentTaskText(sentence);
+    return plural.test(current)
+      && (completedAssay.test(current) || /\b(?:achieved|indicated|tested|evaluated|conducted|demonstrated)\b/i.test(current))
+      && !incompleteAssay.test(current)
+      && !/\b(?:no|not|never|without|cannot|\w+n['’]t|lacked|lacking|required|needed|necessary)\b/i.test(current);
+  });
+}
 const normalized = (v: string) => collapseWhitespace(scientificText(v)).toLowerCase();
 export type ResearchSupport = Record<string, string>;
 export type ResearchRejections = Record<string, string>;
@@ -181,7 +195,7 @@ export function validateResearchExtraction(value: unknown, material: ResearchMat
         const measuredSpr = value === "in-vitro" && quote.split(/[.!?。；;]/).some(sentence => /\bsurface plasmon resonance\b/i.test(sentence) && completedAssay.test(sentence) && !prospectOnly.test(sentence) && !incompleteAssay.test(sentence));
         // A review may describe completed trials; clinical background is not an original trial.
         const reviewedTrials = value === "clinical" && profile.documentType === "review" && quote.split(/[.!?。；;]/).some(sentence => /\bclinical evidence\b.{0,120}\bstudies were\b.{0,80}\btrials\b/i.test(sentence) && !prospectOnly.test(sentence) && !/\b(?:planned|proposed|pending|absent|unavailable|lacking|no|not|never|animals?|mice|mouse|rats?|rodents?|preclinical)\b|\bin vitro\b/i.test(sentence));
-        if ((!stagePatterns[value]!.test(quote) && !measuredSpr && !reviewedTrials) || cellOnly || (value === "clinical" && /\b(?:no|not|without|future|warrant|before|preclinical)\b.{0,40}\bclinical|未.*临床|尚无.*临床/i.test(quote))) { delete support[`${field}.${value}`]; rejections[`${field}.${value}`] = "stage-not-supported"; continue; }
+        if ((!stagePatterns[value]!.test(quote) && !completedPluralStage(value, quote) && !measuredSpr && !reviewedTrials) || cellOnly || (value === "clinical" && /\b(?:no|not|without|future|warrant|before|preclinical)\b.{0,40}\bclinical|未.*临床|尚无.*临床/i.test(quote))) { delete support[`${field}.${value}`]; rejections[`${field}.${value}`] = "stage-not-supported"; continue; }
       }
       values.push(value);
     }
