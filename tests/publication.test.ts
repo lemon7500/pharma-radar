@@ -525,25 +525,39 @@ test("temporary isolation and restoration before republishing invalidates both e
 
 test("current full-text permission also gates X text, translations and quoted posts on old website and Markdown exits", async () => {
   const id = await article();
-  const text = `X-FULL-${T}`, quote = `X-QUOTE-${T}`, translated = `X-TRANSLATED-${T}`;
-  await sql`UPDATE articles SET x_post=${sql.json({ tweetId: '123456789', authorName: 'Fixture', handle: 'fixture', text,
-    quoted: { authorName: 'Quoted', handle: 'quoted', text: quote, url: 'https://x.com/quoted/status/123456788' } })} WHERE id=${id}`;
-  await sql`INSERT INTO translations (article_id,revision,body_html,body_text,origin) VALUES (${id},1,${'<p>'+translated+'</p>'},${translated},'source')`;
-  await publishArticle(id, released());
-  assert.ok((await get(`/api/site/items/${id}/original`)).body.includes(text));
-  assert.ok((await get(`/items/${id}/markdown`)).body.includes(quote));
   try {
-    await changeSourcePermission({ site_fulltext: false });
-    const response = await get(`/api/site/items/${id}`);
-    assert.equal(response.status, 200);
-    assert.equal(JSON.parse(response.body).body, null);
-    assert.equal(JSON.parse(response.body).x, null);
-    for (const url of [`/api/site/items/${id}/original`, `/items/${id}/markdown`, "/api/site/pool"]) {
-      const body = (await get(url)).body;
-      assert.ok(!body.includes(text) && !body.includes(quote) && !body.includes(translated), url);
-    }
-  } finally { await changeSourcePermission({ site_fulltext: true }); }
-  assert.ok((await get(`/items/${id}/markdown`)).body.includes(text));
+    const text = `X-FULL-${T}`, quote = `X-QUOTE-${T}`, translated = `X-TRANSLATED-${T}`;
+    await sql`UPDATE articles SET x_post=${sql.json({ tweetId: '123456789', authorName: 'Fixture', handle: 'fixture', text,
+      quoted: { authorName: 'Quoted', handle: 'quoted', text: quote, url: 'https://x.com/quoted/status/123456788' } })} WHERE id=${id}`;
+    await sql`INSERT INTO translations (article_id,revision,body_html,body_text,origin) VALUES (${id},1,${'<p>'+translated+'</p>'},${translated},'source')`;
+    await publishArticle(id, released());
+    assert.ok((await get(`/api/site/items/${id}/original`)).body.includes(text));
+    assert.ok((await get(`/items/${id}/markdown`)).body.includes(quote));
+    try {
+      await changeSourcePermission({ site_fulltext: false });
+      const response = await get(`/api/site/items/${id}`);
+      assert.equal(response.status, 200);
+      assert.equal(JSON.parse(response.body).body, null);
+      assert.equal(JSON.parse(response.body).x, null);
+      for (const url of [`/api/site/items/${id}/original`, `/items/${id}/markdown`, "/api/site/pool"]) {
+        const body = (await get(url)).body;
+        assert.ok(!body.includes(text) && !body.includes(quote) && !body.includes(translated), url);
+      }
+    } finally { await changeSourcePermission({ site_fulltext: true }); }
+    assert.ok((await get(`/items/${id}/markdown`)).body.includes(text));
+  } finally {
+    // The shared test database is also scanned by translateQuotes(). Do not leave this
+    // selected X quote as unrelated work for the later shutdown/receipt test.
+    await sql`UPDATE articles SET x_post=NULL WHERE id=${id}`;
+    await setVisibility(id, { visibility:"withdrawn",reason:"X permission fixture cleanup",version:0 }, "test");
+  }
+  const quoteCandidates = await sql`
+    SELECT p.article_id FROM publications p JOIN articles a ON a.id=p.article_id
+    WHERE p.article_id=${id} AND p.channel='x' AND p.selected AND p.visibility='public' AND p.body_mode='full'
+      AND p.discovered_at > now()-interval '3 days'
+      AND substring(a.x_post->'quoted'->>'url' from '/status/([0-9]+)') IS NOT NULL
+      AND coalesce(a.x_post->'quoted'->>'text','') <> ''`;
+  assert.equal(quoteCandidates.length,0,"the cleaned permission fixture cannot enter later quote-translation scans");
 });
 
 test("warmed public caches and conditional requests observe source permission changes across processes before republishing", async () => {
