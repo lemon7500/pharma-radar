@@ -191,7 +191,7 @@ export async function exportMarkdown(id: string): Promise<{ filename: string; bo
     if (r.status === "ready" && row.summary) lines.push("## 阅读概要", "", row.summary, "");
     if (r.status === "ready" && row.reason) lines.push("## 为什么值得读", "", row.reason, "");
     if (row.index_only) lines.push("## 整理状态", "", "文献信息已收录，研究导读整理中。请先阅读来源原文。", "");
-    else for (const c of RESEARCH_CLAIMS) lines.push(`## ${r.documentType === "review" && c.key === "results" ? "综述要点" : c.label}`, "", r.claims[c.key] || "已获取材料未提供足够依据。", "");
+    else for (const c of RESEARCH_CLAIMS) lines.push(`## ${r.documentType === "review" && c.key === "results" ? "综述要点" : c.label}`, "", r.claims[c.key] || "此字段尚未形成有来源支持的导读内容，请结合原文核对。", "");
   } else {
     if (row.summary) lines.push("## 摘要", "", row.summary, "");
     if (row.selected && row.reason) lines.push("## 推荐理由", "", row.reason, "");

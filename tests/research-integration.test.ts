@@ -55,7 +55,7 @@ test('own DOI deduplicates across sources and keeps discoveries; existing aliase
 });
 test('share images and exported reading notes hide unverified legacy claims and retain supported research',async()=>{
  const id=await record(7);
- const note=await exportMarkdown(id);assert.ok(note);assert.match(note.body,/核心结果[\s\S]*活性降低25%/);assert.match(note.body,/DOI：10\.1234/);assert.match(note.body,/研究局限[\s\S]*未提供足够依据/);
+ const note=await exportMarkdown(id);assert.ok(note);assert.match(note.body,/核心结果[\s\S]*活性降低25%/);assert.match(note.body,/DOI：10\.1234/);assert.match(note.body,/研究局限[\s\S]*尚未形成有来源支持的导读内容/);
  assert.ok(!note.body.includes('quote'));
  const share=await loadItemShare(id);assert.equal(share!.summary,'活性降低25%。');assert.equal(share!.researchKicker,'原始研究');
  await sql`UPDATE articles SET body_text='References: 10.1234/a 10.1234/b 10.1234/c',revision=revision+1 WHERE id=${id}`;

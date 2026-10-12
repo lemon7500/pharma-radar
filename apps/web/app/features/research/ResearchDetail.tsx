@@ -35,13 +35,13 @@ export function ResearchDetail({ item }: { item:SiteItemDetail }) {
         <h2 id="scope-title">本篇导读的材料范围</h2>
         <strong>{r ? researchBasisLabel(r) : "材料范围待整理"}</strong>
         {r?.materialKind === "abstract-supplement" && <p>已核对公开摘要与补充材料，尚未核对论文正文。补充材料中的实验信息不能替代完整的方法与结果。</p>}
-        <p>{ready ? "下方研究信息从已获取材料中整理；不能替代阅读全文和评价研究质量。未填局限表示当前材料未交代，不表示研究没有局限。" : r?.status === "insufficient" ? "当前仅获取标题、过短内容或参考文献列表，暂不生成深入导读。保留文献索引与原文入口，研究方法、结果和证据阶段待确认。" : "已核对的研究信息在下方展示，导读尚未满足基本完整度。缺少依据的字段保留为空，请结合原文核对。"}</p>
+        <p>{ready ? "下方研究信息从已获取材料中整理；不能替代阅读全文和评价研究质量。局限尚未整理时，不代表研究没有局限。" : r?.status === "insufficient" ? "当前仅获取标题、过短内容或参考文献列表，暂不生成深入导读。保留文献索引与原文入口，研究方法、结果和证据阶段待确认。" : "已核对的研究信息在下方展示，导读尚未满足基本完整度。缺少依据的字段保留为空，请结合原文核对。"}</p>
         {!!r?.materialSources?.length && <ul className="material-source-links" aria-label="已核对的来源材料">{r.materialSources.map(s => <li key={s.url}><a href={s.url} target="_blank" rel="noopener noreferrer">{s.label} ↗</a></li>)}</ul>}
         </>}
       </section>
       {ready && item.summary && <section className="research-abstract"><h2>阅读概要</h2><p>{item.summary}</p></section>}
       {ready && item.reason && <aside className="reading-significance"><h2>为什么值得读</h2><p>{item.reason}</p></aside>}
-      <div className="research-claim-sections">{present.map(c => <section id={`research-${c.key}`} key={c.key}><h2>{r?.documentType === "review" && c.key === "results" ? "综述要点" : c.label}</h2><p>{r!.claims[c.key]}</p></section>)}{!!missing.length && <section id="research-missing"><h2>待核对的信息</h2><p className="claim-missing">{missing.map(c => c.label).join("、")}：已获取材料未提供足够依据，请结合原文核对。</p></section>}</div>
+      <div className="research-claim-sections">{present.map(c => <section id={`research-${c.key}`} key={c.key}><h2>{r?.documentType === "review" && c.key === "results" ? "综述要点" : c.label}</h2><p>{r!.claims[c.key]}</p></section>)}{!!missing.length && <section id="research-missing"><h2>待核对的信息</h2><p className="claim-missing">{missing.map(c => c.label).join("、")}：这些字段尚未形成有来源支持的导读内容，请结合原文核对。</p></section>}</div>
       {original && item.readingMode !== "summary-only" && <section className="research-source-body"><h2>{item.body?.zhKind === "translation" ? "来源正文 · AI 翻译" : "已授权展示的来源正文"}</h2><div className="prose" dangerouslySetInnerHTML={{__html:original}} /></section>}
       <section className="research-citation" id="research-citation"><h2>引用与原文</h2><p>{b?.authors.length ? b.authors.slice(0,3).join(", ") + (b.authors.length > 3 ? ", et al. " : ". ") : ""}{(item.originalTitle || item.title).replace(/[.。]+$/, "")}. {b?.journal || item.source.name}{time.date ? `, ${time.date}` : ""}{b?.doi ? `. DOI: ${b.doi}` : ""}.</p><a href={item.links.original} target="_blank" rel="noopener noreferrer">打开来源原文 ↗</a>{b?.doi && <a href={`https://doi.org/${encodeURI(b.doi)}`} target="_blank" rel="noopener noreferrer">通过 DOI 查看 ↗</a>}</section>
     </div><aside className="reading-rail" aria-label="文献信息与阅读操作">
