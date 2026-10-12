@@ -58,6 +58,31 @@ test('Europe PMC metadata uses only the paper own identifiers and genuine dates'
  assert.equal(normalizeDoi('10.1234/evil<script>'),null);assert.equal(baselineResearch({title:'Review',bodyText:abstract,bibliography:b}).documentType,'review');
  assert.equal(materialBasis(material),'abstract');assert.equal(materialBasis({...material,fullText:true}),'fulltext');
 });
+test('bibliography preserves ordered author entries with identical abbreviations while other sets stay deduplicated',()=>{
+ const b=normalizeBibliography({authors:['Xu W','Li H','Xu W','  ','Lan X'],publicationTypes:['Journal Article','Journal Article']});
+ assert.deepEqual(b.authors,['Xu W','Li H','Xu W','Lan X']);assert.deepEqual(b.publicationTypes,['Journal Article']);
+ const bounded=normalizeBibliography({authors:Array.from({length:51},()=> 'Xu W')});assert.equal(bounded.authors.length,50);
+});
+test('Europe PMC preserves distinct authors sharing initials and prefers source first and last names',()=>{
+ const b=europePmcBibliography({authorList:{author:[
+  {firstName:'Xiaoyu',lastName:'Lan',fullName:'Lan X'},
+  {firstName:'Weicheng',lastName:'Xu',fullName:'Xu W'},
+  {firstName:'Wentao',lastName:'Xu',fullName:'Xu W'},
+ ]}});
+ assert.deepEqual(b.authors,['Xiaoyu Lan','Weicheng Xu','Wentao Xu']);
+});
+test('Europe PMC author fallbacks keep collective names, source order and unresolved duplicate abbreviations',()=>{
+ const b=europePmcBibliography({authorList:{author:[
+  {fullName:'Xu W'},
+  {collectiveName:'Gastric Mucosa Research Group',fullName:'Group'},
+  {firstName:'W',fullName:'Xu W'},
+  {lastName:'Li',fullName:'Li H'},
+  {collectiveName:' ',fullName:'Fallback Author'},
+  {},
+ ]}});
+ assert.deepEqual(b.authors,['Xu W','Gastric Mucosa Research Group','Xu W','Li H','Fallback Author']);
+ const fallback=europePmcBibliography({authorString:'Xu W, Li H, Xu W'});assert.deepEqual(fallback.authors,['Xu W','Li H','Xu W']);
+});
 test('brief sections follow research areas and keep policy material separate',()=>{
  assert.equal(researchSection({category:'tcm',researchArea:'mechanisms'}),'药理机制');assert.equal(researchSection({category:'regulation'}),'监管与产业资讯');assert.equal(researchSection({category:'paper'}),'研究环节待确认');
 });
