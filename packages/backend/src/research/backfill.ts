@@ -62,7 +62,13 @@ export async function backfillResearch(options: { limit?: number; deadline?: num
       }
       await sql.begin(async tx => {
         const [current] = await tx`SELECT title,coalesce(research_abstract,body_text) AS "bodyText",excerpt,bibliography,research_material_kind AS "materialKind",revision FROM articles WHERE id=${row.id} FOR UPDATE`;
-        if (!current || current.revision !== input.revision || researchMaterialFingerprint({title:current.title,bodyText:current.bodyText,excerpt:current.excerpt,bibliography:normalizeBibliography(current.bibliography),materialKind:current.materialKind ?? undefined}) !== fingerprint) throw new Error("research material changed");
+        // Read effective metadata after the article lock, matching the input and seeing corrections
+        // committed while this transaction waited. A locking JOIN could keep an older snapshot.
+        const [override] = current ? await tx`SELECT CASE WHEN jsonb_typeof(fields->'researchBibliography') = 'object'
+          THEN fields->'researchBibliography' END AS bibliography FROM editorial_overrides WHERE article_id=${row.id}` : [];
+        if (!current || current.revision !== input.revision || researchMaterialFingerprint({title:current.title,
+          bodyText:current.bodyText,excerpt:current.excerpt,bibliography:normalizeBibliography(override?.bibliography ?? current.bibliography),
+          materialKind:current.materialKind ?? undefined}) !== fingerprint) throw new Error("research material changed");
         const stored = await tx`UPDATE articles SET research_profile = ${tx.json(profile as never)}, research_support = ${tx.json(support)},
           research_revision = ${input.revision}, research_enriched_at = now(), research_retry_at = NULL,
           research_processing_version=${RESEARCH_PROCESSING_VERSION},research_material_fingerprint=${fingerprint},
