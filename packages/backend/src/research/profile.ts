@@ -5,6 +5,8 @@ import { scientificText } from "./material.ts";
 
 const string = (v: unknown, max = 400): string | null => typeof v === "string" && v.trim() ? collapseWhitespace(scientificText(v)).slice(0, max) : null;
 const strings = (v: unknown, max = 50): string[] => Array.isArray(v) ? [...new Set(v.map(x => string(x, 200)).filter((x): x is string => !!x))].slice(0, max) : [];
+// Preserve source order: identical abbreviations can name different authors.
+const authorNames = (v: unknown): string[] => Array.isArray(v) ? v.map(x => string(x, 200)).filter((x): x is string => !!x).slice(0, 50) : [];
 const record = (v: unknown): Record<string, any> => v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, any> : {};
 export function normalizeDoi(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -17,7 +19,7 @@ export function normalizeBibliography(value: unknown): Bibliography {
   const validDate = date && /^\d{4}-\d{2}-\d{2}$/.test(date) && Number.isFinite(Date.parse(date)) && new Date(date).toISOString().startsWith(date);
   return {
     doi: normalizeDoi(v.doi), pmid: typeof v.pmid === "string" && /^\d{1,12}$/.test(v.pmid) ? v.pmid : null,
-    authors: strings(v.authors), journal: string(v.journal, 300), publishedDate: validDate ? date : null,
+    authors: authorNames(v.authors), journal: string(v.journal, 300), publishedDate: validDate ? date : null,
     publicationTypes: strings(v.publicationTypes, 10), isPreprint: typeof v.isPreprint === "boolean" ? v.isPreprint : null,
   };
 }
@@ -28,7 +30,10 @@ export function europePmcBibliography(item: unknown): Bibliography {
   const types = strings(record(v.pubTypeList).pubType, 10);
   return normalizeBibliography({
     doi: v.doi, pmid: v.pmid ?? (v.source === "MED" ? v.id : null),
-    authors: Array.isArray(authors) ? authors.map(a => record(a).fullName || record(a).collectiveName) : string(v.authorString)?.split(/,\s*/) ?? [],
+    authors: Array.isArray(authors) ? authors.map(a => {
+      const author = record(a), firstName = string(author.firstName, 200), lastName = string(author.lastName, 200);
+      return firstName && lastName ? firstName + " " + lastName : string(author.collectiveName, 200) || string(author.fullName, 200);
+    }) : string(v.authorString)?.split(/,\s*/) ?? [],
     journal: record(record(v.journalInfo).journal).title,
     publishedDate: v.firstPublicationDate,
     publicationTypes: types,
