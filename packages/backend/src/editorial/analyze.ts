@@ -478,7 +478,17 @@ export async function analyzeArticle(articleId: string, opts: StepOpts = {}): Pr
   };
   const committed = await sql.begin(async (tx) => {
     const [current] = await tx`SELECT revision,title,coalesce(research_abstract,body_text) AS "bodyText",excerpt,bibliography,research_material_kind AS "materialKind" FROM articles WHERE id = ${articleId} FOR UPDATE`;
-    const stale = !current || current.revision !== input.revision || !!run.structure?.research && researchMaterialFingerprint({title:current.title,bodyText:current.bodyText,excerpt:current.excerpt,bibliography:normalizeBibliography(current.bibliography),materialKind:current.materialKind ?? undefined}) !== researchMaterialFingerprint(input);
+    let bibliography = current?.bibliography;
+    if (current && run.structure?.research) {
+      // Match loadAnalyzeInput's effective metadata. Read it after the article lock: a JOIN in the
+      // locking query could retain an old override snapshot while waiting for another transaction.
+      const [override] = await tx`SELECT CASE WHEN jsonb_typeof(fields->'researchBibliography') = 'object'
+        THEN fields->'researchBibliography' END AS bibliography FROM editorial_overrides WHERE article_id = ${articleId}`;
+      bibliography = override?.bibliography ?? current.bibliography;
+    }
+    const stale = !current || current.revision !== input.revision || !!run.structure?.research
+      && researchMaterialFingerprint({ title:current.title, bodyText:current.bodyText, excerpt:current.excerpt,
+        bibliography:normalizeBibliography(bibliography), materialKind:current.materialKind ?? undefined }) !== researchMaterialFingerprint(input);
     const [row] = await tx<{ id: number }[]>`
       INSERT INTO analyses (article_id, input_revision, origin, model, prompt_version, receipt_ids, relevance, category, tags,
         subjects, title_zh, summary_zh, reason_zh, score, selected, output)
