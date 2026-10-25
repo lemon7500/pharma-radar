@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { Presence } from "../components/ui/Presence";
 import { pageMeta } from "../lib/seo";
-import { exportBundle, importBundle, removeStar, useStarred, useReadSet, markRead, type ImportReport } from "../lib/local-state";
+import { STARRED_LIMIT, exportBundle, importBundle, removeStar, useStarred, useReadSet, markRead, type ImportReport } from "../lib/local-state";
 import { publicationTime, publicationLabel } from "@aihot/contracts/publication-time";
 import { fullDateTime, shortSourceName } from "../lib/format";
 import { IconBookmark, IconDownload, IconClose } from "../components/icons";
@@ -93,6 +93,7 @@ export default function StarredPage() {
         </div>
       </header>
       <p className="rounded-tile border border-line bg-surface px-4 py-2.5 text-[12.5px] text-ink-3">收藏只保存在当前浏览器；清除浏览器数据或换设备后不会同步。导入文件保留日期，具体发表时刻请打开资料页核对。</p>
+      <p className="mt-2 text-[12.5px] leading-relaxed text-ink-3">本机最多保存 {STARRED_LIMIT} 条收藏。达到上限后会保留已有收藏并暂停新增；可先导出备份，再移除不需要的收藏后继续添加。</p>
       {mounted && starred.length > 0 && <div className="reading-list-toolbar"><span>{visible.length} 条资料</span><label>排序<select value={sort} onChange={e => setSort(e.target.value)}><option value="saved">最近收藏</option><option value="published">最近发表</option></select></label><label><input type="checkbox" checked={unread} onChange={e => setUnread(e.target.checked)} /> 仅看未读</label></div>}
       <Presence show={!!notice} enter="anim-notice-in" exit="anim-fade-out" duration={160}>
         <div

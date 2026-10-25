@@ -11,21 +11,96 @@ after(() => {
 let instance = 0;
 async function reader(stars: unknown[] = []) {
   const values = new Map<string, string>([["aihot-starred-items", JSON.stringify(stars)]]);
+  const writes: string[] = [];
   Object.defineProperty(globalThis, "window", {
     configurable: true,
     value: { localStorage: {
       getItem: (key: string) => values.get(key) ?? null,
-      setItem: (key: string, value: string) => { values.set(key, value); },
+      setItem: (key: string, value: string) => { writes.push(key); values.set(key, value); },
       removeItem: (key: string) => { values.delete(key); },
     } },
   });
   // A fresh module has the same empty snapshot cache as a newly opened browser tab.
   const state: typeof import("../app/lib/local-state.ts") = await import(`../app/lib/local-state.ts?test=${instance++}`);
-  return { state, values };
+  return { state, values, writes };
 }
 
 const invalidDates = ["not-a-date", "", "999999-01-01", "+275760-09-13T00:00:00.000Z", null, 42, {}];
 const displayDate = (value: string) => `${beijingDate(value)} ${beijingTime(value)}`;
+
+const savedBookmark = (id: string) => ({ id, title: `Saved ${id}`, summary: null, sourceName: "Source", savedAt: "2026-10-01T00:00:00Z", publishedAt: null, score: null, aiSelected: false });
+const savedBookmarks = (count: number) => Array.from({ length: count }, (_, index) => savedBookmark(`saved-${index}`));
+
+test("the last available bookmark slot saves successfully without displacing any existing record", async () => {
+  const existing = savedBookmarks(499);
+  const { state, values, writes } = await reader(existing);
+  assert.equal(state.toggleStar(savedBookmark("new")), true);
+  const saved = JSON.parse(values.get(state.KEYS.starred)!);
+  assert.equal(saved.length, state.STARRED_LIMIT);
+  assert.equal(saved[0].id, "new");
+  assert.deepEqual(saved.slice(1), existing);
+  assert.deepEqual(writes, [state.KEYS.starred]);
+  assert.equal(state.exportBundle().version, 1);
+  assert.equal(state.KEYS.starred, "aihot-starred-items");
+});
+
+test("a full reading list rejects new bookmarks without writing or losing the oldest record", async () => {
+  const existing = savedBookmarks(500);
+  const { state, values, writes } = await reader(existing);
+  const before = values.get(state.KEYS.starred);
+  const snapshot = state.getStarred();
+  assert.equal(state.toggleStar(savedBookmark("new")), "limit");
+  assert.equal(state.toggleStar(savedBookmark("another")), "limit");
+  assert.equal(values.get(state.KEYS.starred), before);
+  assert.deepEqual(writes, []);
+  assert.strictEqual(state.getStarred(), snapshot);
+  assert.deepEqual(state.exportBundle().starred, existing);
+  assert.equal(state.isStarred("new"), false);
+  assert.equal(state.isStarred("saved-499"), true);
+});
+
+test("a reader can remove a bookmark from a full list and use the freed slot", async () => {
+  const existing = savedBookmarks(500);
+  const { state } = await reader(existing);
+  assert.equal(state.toggleStar(existing[0]!), false);
+  assert.equal(state.getStarred().length, 499);
+  assert.equal(state.toggleStar(savedBookmark("new")), true);
+  assert.equal(state.getStarred().length, 500);
+  assert.equal(state.isStarred("saved-0"), false);
+  assert.equal(state.isStarred("saved-499"), true);
+  assert.equal(state.removeStar("saved-1"), true);
+  assert.equal(state.getStarred().length, 499);
+  assert.equal(state.toggleStar(savedBookmark("replacement")), true);
+  assert.equal(state.getStarred().length, 500);
+  assert.equal(state.isStarred("saved-499"), true);
+});
+
+test("import at capacity reports skipped additions and preserves existing bookmark contents", async () => {
+  const existing = savedBookmarks(500);
+  const { state } = await reader(existing);
+  const report = state.importBundle(JSON.stringify({ version: 1, starred: [savedBookmark("incoming"), { ...existing[0], title: "Replacement title" }] }));
+  assert.equal(report.starredAdded, 0);
+  assert.equal(report.starredSkipped, 1);
+  assert.deepEqual(state.getStarred(), existing);
+  assert.equal(state.isStarred("incoming"), false);
+});
+
+test("an import fills only the remaining slot and the direct toggle respects the resulting limit", async () => {
+  const existing = savedBookmarks(499);
+  const { state, values, writes } = await reader(existing);
+  const report = state.importBundle(JSON.stringify({ version: 1, starred: [savedBookmark("first"), savedBookmark("second")] }));
+  assert.equal(report.starredAdded, 1);
+  assert.equal(report.starredSkipped, 1);
+  assert.equal(state.getStarred().length, 500);
+  assert.equal(state.isStarred("first"), true);
+  assert.equal(state.isStarred("second"), false);
+  assert.deepEqual(state.getStarred().filter(item => item.id !== "first"), existing);
+  const before = values.get(state.KEYS.starred);
+  const beforeWrites = writes.length;
+  assert.equal(state.toggleStar(savedBookmark("new")), "limit");
+  assert.equal(values.get(state.KEYS.starred), before);
+  assert.equal(writes.length, beforeWrites);
+});
 
 test("import normalizes invalid bookmark dates before persisting without dropping bookmarks", async () => {
   const { state, values } = await reader();

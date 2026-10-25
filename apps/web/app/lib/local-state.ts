@@ -175,11 +175,12 @@ export function isStarred(id: string): boolean {
   return starredSetCache.ids.has(id);
 }
 
-/** Returns the resulting saved state, or null when storage rejected the change. */
-export function toggleStar(item: Omit<LocalStarredItem, "savedAt">): boolean | null {
+/** Returns the saved state, "limit" without changing a full list, or null when storage rejects a write. */
+export function toggleStar(item: Omit<LocalStarredItem, "savedAt">): boolean | "limit" | null {
   const list = getStarred();
   const exists = list.some((s) => s.id === item.id);
-  const next = exists ? list.filter((s) => s.id !== item.id) : [{ ...item, savedAt: new Date().toISOString() }, ...list].slice(0, STARRED_LIMIT);
+  if (!exists && list.length >= STARRED_LIMIT) return "limit";
+  const next = exists ? list.filter((s) => s.id !== item.id) : [{ ...item, savedAt: new Date().toISOString() }, ...list];
   if (!writeRaw(KEYS.starred, JSON.stringify(next))) return null;
   invalidate(KEYS.starred);
   return !exists;
