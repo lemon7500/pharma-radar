@@ -68,7 +68,7 @@ function chunkedResponse(chunks, { headers = {}, cancel } = {}) {
 }
 
 // Every request is answered locally. Unexpected targets throw before any I/O.
-function harness({ active = {}, recent = [], jobData = new Map(), override, dispatch = () => new Response(null, { status: 204 }), flag = 'true', state = 'active' } = {}) {
+function harness({ active = {}, recent = [], jobData = new Map(), override, dispatch = () => new Response(null, { status: 204 }), flag = 'true', state = 'active', now = NOW } = {}) {
   const requests = [];
   const logs = [];
   const fetchImpl = async (urlValue, options) => {
@@ -98,7 +98,7 @@ function harness({ active = {}, recent = [], jobData = new Map(), override, disp
         assert.ok(ACTIVE.includes(status));
         return json(list(active[status] ?? []));
       }
-      assert.equal(url.searchParams.get('created'), `>=${iso(210)}`);
+      assert.equal(url.searchParams.get('created'), `>=${new Date(now - 210 * 60_000).toISOString()}`);
       return json(list(recent));
     }
     const jobMatch = url.pathname.match(/^\/repos\/lemon7500\/pharma-radar\/actions\/runs\/(\d+)\/jobs$/);
@@ -112,7 +112,7 @@ function harness({ active = {}, recent = [], jobData = new Map(), override, disp
     if (url.pathname === `${WORKFLOW}/dispatches` && options.method === 'POST') return dispatch(request);
     assert.fail(`Unexpected mock request: ${url.pathname}`);
   };
-  const check = (env = ENV) => checkCollection(env, { fetchImpl, now: NOW, log: entry => logs.push(entry) });
+  const check = (env = ENV) => checkCollection(env, { fetchImpl, now, log: entry => logs.push(entry) });
   const dispatches = () => requests.filter(({ options }) => options.method === 'POST');
   return { requests, logs, check, dispatches };
 }
@@ -606,4 +606,204 @@ test('HTTP entry point always returns 404 with no cacheable trigger', async () =
   assert.equal(response.status, 404);
   assert.equal(response.headers.get('Cache-Control'), 'no-store');
   assert.equal(await response.text(), 'Not found');
+});
+
+const DIAGNOSTIC_START = Date.parse('2026-10-25T08:00:00Z');
+const DIAGNOSTIC_END = Date.parse('2026-10-25T20:00:00Z');
+const DIAGNOSTIC_ENV = { ...ENV, DIAGNOSTICS_ENABLED: 'true' };
+const DIAGNOSTIC_CLASSES = ['metadata', 'flag', 'history', 'jobs', 'active', 'dispatch'];
+function instrumentHeaders(response, onGet) {
+  const original = response.headers;
+  Object.defineProperty(response, 'headers', { value: { get(name) {
+    onGet(name);
+    return original.get(name);
+  } } });
+  return response;
+}
+
+test('diagnostics require explicit opt-in and only new invocations within the UTC window', async t => {
+  for (const [label, now, value, enabled] of [
+    ['before', DIAGNOSTIC_START - 1, 'true', false],
+    ['start included', DIAGNOSTIC_START, 'true', true],
+    ['end minus one', DIAGNOSTIC_END - 1, 'true', true],
+    ['end excluded', DIAGNOSTIC_END, 'true', false],
+    ['after', DIAGNOSTIC_END + 1, 'true', false],
+    ['missing', DIAGNOSTIC_START, undefined, false],
+    ['false', DIAGNOSTIC_START, 'false', false],
+    ['invalid', DIAGNOSTIC_START, 'TRUE', false],
+    ['boolean', DIAGNOSTIC_START, true, false],
+  ]) await t.test(label, async () => {
+    let encodingReads = 0;
+    const h = harness({ now, override: ({ url }) => url.pathname === WORKFLOW
+      ? instrumentHeaders(json({ id: 7, path: '.github/workflows/pharma-collect.yml', state: 'active' }), name => {
+        if (name === 'content-encoding') { encodingReads++; if (!enabled) throw new Error(TOKEN); }
+      }) : undefined });
+    const result = await h.check({ ...ENV, DIAGNOSTICS_ENABLED: value });
+    assert.deepEqual(result, { scheduler: 'pharma-collection', reason: 'dispatched' });
+    assert.equal(h.requests.length, 9);
+    assert.equal(h.dispatches().length, 1);
+    assert.equal(h.logs.length, 1);
+    assert.equal(!!h.logs[0].stats, enabled);
+    assert.equal(encodingReads, enabled ? 1 : 0);
+  });
+});
+
+test('diagnostics env getter failure and disabled scheduler cannot change dispatch behavior', async () => {
+  let getterCalls = 0;
+  const env = { ...ENV, get DIAGNOSTICS_ENABLED() { getterCalls++; throw new Error(TOKEN); } };
+  const h = harness({ now: DIAGNOSTIC_START });
+  await h.check(env);
+  assert.equal(getterCalls, 1);
+  assert.deepEqual(h.logs, [{ scheduler: 'pharma-collection', reason: 'dispatched' }]);
+  const after = harness({ now: DIAGNOSTIC_END });
+  await after.check(env);
+  assert.equal(getterCalls, 1, 'Expired invocations do not even inspect the diagnostic switch');
+  const disabled = harness({ now: DIAGNOSTIC_START });
+  await disabled.check({ ...ENV, ENABLE: 'false', get DIAGNOSTICS_ENABLED() { throw new Error(TOKEN); } });
+  assert.equal(disabled.requests.length, 0);
+  assert.deepEqual(disabled.logs, [{ scheduler: 'pharma-collection', reason: 'disabled' }]);
+});
+
+test('diagnostics count actual EOF bytes and chunks once while reusing validated length', async () => {
+  const bytes = workflowBytes();
+  let lengthReads = 0;
+  const h = harness({ now: DIAGNOSTIC_START, override: ({ url }) => url.pathname === WORKFLOW
+    ? instrumentHeaders(chunkedResponse([bytes.slice(0, 10), bytes.slice(10, 20), bytes.slice(20)], { headers: { 'Content-Length': '0', 'Content-Encoding': 'GZip' } }), name => { if (name === 'content-length') lengthReads++; }) : undefined });
+  const result = await h.check(DIAGNOSTIC_ENV);
+  assert.equal(lengthReads, 1);
+  assert.equal('stats' in result, false);
+  const stats = h.logs[0].stats;
+  assert.deepEqual(Object.keys(stats), ['v', 'complete', ...DIAGNOSTIC_CLASSES]);
+  assert.equal(stats.v, 1);
+  assert.equal(stats.complete, true);
+  assert.deepEqual(stats.metadata, { n: 1, b: bytes.byteLength, c: 3, e: [0, 0, 1, 0, 0, 0, 0], h: [1, 0, 0] });
+  assert.deepEqual(stats.dispatch, { n: 1, b: 0, c: 0, e: [1, 0, 0, 0, 0, 0, 0], h: [0, 1, 0] });
+  assert.equal(stats.active.n, 5);
+  assert.equal(stats.jobs.n, 0);
+  assert.equal(DIAGNOSTIC_CLASSES.reduce((sum, category) => sum + stats[category].n, 0), h.requests.length);
+});
+
+test('diagnostics include jobs, declared bytes and a JSON dispatch without changing original result', async () => {
+  const time = new Date(DIAGNOSTIC_START - 60 * 60_000).toISOString();
+  const recent = [run({ age: 60, created_at: time, run_started_at: time })];
+  const jobData = new Map([[21, jobs(21, { age: 60, started_at: time })]]);
+  const dispatchText = JSON.stringify({ workflow_run_id: 543, privateValue: TOKEN });
+  const h = harness({ now: DIAGNOSTIC_START, recent, jobData, dispatch: () => new Response(dispatchText, { status: 200, headers: { 'Content-Length': String(Buffer.byteLength(dispatchText)), 'Content-Encoding': 'identity' } }) });
+  const result = await h.check(DIAGNOSTIC_ENV);
+  assert.deepEqual(result, { scheduler: 'pharma-collection', reason: 'dispatched', runId: 543 });
+  assert.equal(h.requests.length, 10);
+  assert.equal(h.logs[0].stats.jobs.n, 1);
+  assert.deepEqual(h.logs[0].stats.dispatch.h, [1, 0, Buffer.byteLength(dispatchText)]);
+  assert.deepEqual(h.logs[0].stats.dispatch.e, [0, 1, 0, 0, 0, 0, 0]);
+  assert.equal(JSON.stringify(h.logs).includes(TOKEN), false);
+});
+
+test('diagnostics map encoding headers into a fixed enumeration without logging their text', async t => {
+  for (const [encoding, index] of [[undefined, 0], ['IDENTITY', 1], ['gzip', 2], ['br', 3], ['deflate', 4], ['zstd', 5], ['gzip, br', 6], ['private-header-sentinel'.repeat(100), 6]]) {
+    await t.test(String(index) + ':' + String(encoding?.length ?? 0), async () => {
+      const h = harness({ now: DIAGNOSTIC_START, override: ({ url }) => url.pathname === WORKFLOW ? json({ id: 7, path: '.github/workflows/pharma-collect.yml', state: 'disabled_manually' }, 200, encoding === undefined ? {} : { 'Content-Encoding': encoding }) : undefined });
+      const result = await h.check(DIAGNOSTIC_ENV);
+      assert.equal(result.reason, 'workflow_disabled');
+      const expected = [0, 0, 0, 0, 0, 0, 0]; expected[index] = 1;
+      assert.deepEqual(h.logs[0].stats.metadata.e, expected);
+      assert.equal(JSON.stringify(h.logs).includes('private-header-sentinel'), false);
+    });
+  }
+});
+
+test('any observation header failure drops the whole collector and stops later diagnostic reads', async () => {
+  let laterEncodingReads = 0;
+  const h = harness({ now: DIAGNOSTIC_START, override: ({ url }) => {
+    if (url.pathname === WORKFLOW) return instrumentHeaders(json({ id: 7, path: '.github/workflows/pharma-collect.yml', state: 'active' }), name => { if (name === 'content-encoding') throw new Error(TOKEN); });
+    if (url.pathname.endsWith('/variables/COLLECT_ENABLED')) return instrumentHeaders(json({ name: 'COLLECT_ENABLED', value: 'true' }), name => { if (name === 'content-encoding') laterEncodingReads++; });
+  } });
+  await h.check(DIAGNOSTIC_ENV);
+  assert.equal(laterEncodingReads, 0);
+  assert.equal(h.dispatches().length, 1);
+  assert.deepEqual(h.logs, [{ scheduler: 'pharma-collection', reason: 'dispatched' }]);
+});
+
+test('204 diagnostic failures and oversized diagnostic header text never change successful dispatch', async t => {
+  for (const [label, dispatch] of [
+    ['length getter', () => instrumentHeaders(new Response(null, { status: 204 }), name => { if (name === 'content-length') throw new Error(TOKEN); })],
+    ['encoding getter', () => instrumentHeaders(new Response(null, { status: 204 }), name => { if (name === 'content-encoding') throw new Error(TOKEN); })],
+    ['invalid length', () => new Response(null, { status: 204, headers: { 'Content-Length': 'invalid-private-value' } })],
+    ['long length', () => new Response(null, { status: 204, headers: { 'Content-Length': '0'.repeat(100_000) } })],
+  ]) await t.test(label, async () => {
+    const h = harness({ now: DIAGNOSTIC_START, dispatch });
+    await h.check(DIAGNOSTIC_ENV);
+    assert.equal(h.dispatches().length, 1);
+    assert.deepEqual(h.logs, [{ scheduler: 'pharma-collection', reason: 'dispatched' }]);
+  });
+  const h = harness({ now: DIAGNOSTIC_START, override: ({ url }) => url.pathname === WORKFLOW ? json({ id: 7, path: '.github/workflows/pharma-collect.yml', state: 'active' }, 200, { 'Content-Length': '0'.repeat(100_000) + '1' }) : undefined });
+  await h.check(DIAGNOSTIC_ENV);
+  assert.deepEqual(h.logs, [{ scheduler: 'pharma-collection', reason: 'dispatched' }]);
+});
+
+test('snapshot failure discards diagnostics without changing result or adding a log', async () => {
+  const originalSlice = Array.prototype.slice;
+  const h = harness({ now: DIAGNOSTIC_START, dispatch: () => instrumentHeaders(new Response(null, { status: 204 }), name => {
+    if (name === 'content-encoding') Array.prototype.slice = () => { throw new Error(TOKEN); };
+  }) });
+  let result;
+  try { result = await h.check(DIAGNOSTIC_ENV); }
+  finally { Array.prototype.slice = originalSlice; }
+  assert.deepEqual(result, { scheduler: 'pharma-collection', reason: 'dispatched' });
+  assert.deepEqual(h.logs, [result]);
+  assert.equal(h.dispatches().length, 1);
+});
+
+test('failed parallel active reads seal one partial snapshot before late completions', async () => {
+  let release;
+  let lateEncodingReads = 0;
+  let lateLengthReads = 0;
+  const gate = new Promise(resolve => { release = resolve; });
+  const h = harness({ now: DIAGNOSTIC_START, override: async ({ url }) => {
+    const status = url.searchParams.get('status');
+    if (!status) return;
+    if (status === 'queued') return new Response(null, { status: 401 });
+    await gate;
+    return instrumentHeaders(json(list([])), name => {
+      if (name === 'content-length') lateLengthReads++;
+      if (name === 'content-encoding') lateEncodingReads++;
+    });
+  } });
+  await assert.rejects(h.check(DIAGNOSTIC_ENV), error => error.reason === 'github_authentication_failed');
+  assert.equal(h.logs.length, 1);
+  assert.equal(h.logs[0].stats.complete, false);
+  const snapshot = JSON.stringify(h.logs);
+  release();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(lateLengthReads, 4, 'Existing validation still executes for the pending requests');
+  assert.equal(lateEncodingReads, 0, 'Sealed collectors must not inspect late diagnostic headers');
+  assert.equal(JSON.stringify(h.logs), snapshot);
+  assert.equal(h.dispatches().length, 0);
+});
+
+test('diagnostics preserve malformed-body and uncertain-POST failures without replay', async t => {
+  for (const [label, options, reason, posts] of [
+    ['UTF8', { override: () => new Response(new Uint8Array([0xe8, 0x8d])) }, 'invalid_github_json', 0],
+    ['oversize', { override: () => new Response('x', { headers: { 'Content-Length': String(JSON_BYTE_LIMIT + 1) } }) }, 'github_response_too_large', 0],
+    ['unknown POST', { dispatch: () => { throw new Error(TOKEN); } }, 'github_network_error', 1],
+    ['invalid POST JSON', { dispatch: () => new Response('{private', { status: 200 }) }, 'invalid_github_json', 1],
+    ['POST redirect', { dispatch: () => new Response(null, { status: 307, headers: { Location: 'https://invalid.invalid' } }) }, 'github_dispatch_rejected', 1],
+  ]) await t.test(label, async () => {
+    const h = harness({ ...options, now: DIAGNOSTIC_START });
+    await assert.rejects(h.check(DIAGNOSTIC_ENV), error => error.reason === reason);
+    assert.equal(h.logs.length, 1);
+    assert.equal(h.logs[0].reason, reason);
+    assert.equal(h.logs[0].stats.complete, false);
+    assert.equal(h.logs[0].stats.dispatch.n, 0);
+    assert.equal(h.dispatches().length, posts);
+    assert.equal(JSON.stringify(h.logs).includes(TOKEN), false);
+  });
+});
+
+test('fixed diagnostic schema remains below the 800-byte log budget at conservative maxima', () => {
+  const stats = { v: 1, complete: false };
+  for (const [category, count] of Object.entries({ metadata: 1, flag: 1, history: 1, jobs: 10, active: 5, dispatch: 1 })) {
+    stats[category] = { n: count, b: count * JSON_BYTE_LIMIT, c: count * (2 ** 32 - 1), e: Array(7).fill(count), h: [count, count, count * JSON_BYTE_LIMIT] };
+  }
+  const record = { scheduler: 'pharma-collection', reason: 'github_response_unavailable', runId: Number.MAX_SAFE_INTEGER, stats };
+  assert.ok(Buffer.byteLength(JSON.stringify(record)) < 800);
 });

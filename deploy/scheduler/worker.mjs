@@ -16,6 +16,11 @@ const HISTORY_CREATION_WINDOW_MS = LOOKBACK_MS + STALE_ACTIVE_MS;
 const REQUEST_TIMEOUT_MS = 8_000;
 const MAX_JSON_BYTES = 128 * 1024;
 const RECENT_RUN_LIMIT = 10;
+// Opt-in measurement window for invocations that START within these UTC bounds.
+// In-flight reads retain their existing 8-second deadlines after the window ends.
+const DIAGNOSTICS_START_MS = Date.parse('2026-10-25T08:00:00Z');
+const DIAGNOSTICS_END_MS = Date.parse('2026-10-25T20:00:00Z');
+const DIAGNOSTIC_CATEGORIES = ['metadata', 'flag', 'history', 'jobs', 'active', 'dispatch'];
 // decode() is synchronous and non-streaming, so each call resets decoder state.
 // Concurrent response reads never share an incremental UTF-8 decoding session.
 const JSON_DECODER = new TextDecoder('utf-8', { fatal: true });
@@ -62,7 +67,85 @@ function configuration(env) {
   return { enabled, dryRun, token };
 }
 
-async function boundedJson(response) {
+function responseDiagnostics(env, now) {
+  if (now < DIAGNOSTICS_START_MS || now >= DIAGNOSTICS_END_MS) return null;
+  try {
+    if (env.DIAGNOSTICS_ENABLED !== 'true') return null;
+    const rows = {};
+    for (const category of DIAGNOSTIC_CATEGORIES) {
+      // e: missing/identity/gzip/br/deflate/zstd/other encoding counts.
+      // h: present/absent Content-Length counts, then declared byte sum.
+      rows[category] = { n: 0, b: 0, c: 0, e: [0, 0, 0, 0, 0, 0, 0], h: [0, 0, 0] };
+    }
+    return { rows, closed: false, failed: false };
+  } catch {
+    return null;
+  }
+}
+
+function observeResponse(diagnostics, category, response, size, chunks, contentLength) {
+  if (diagnostics.closed || diagnostics.failed) return;
+  try {
+    // JSON responses reuse the header already validated by boundedJson. Only
+    // bodyless 204 responses need this extra read; invalid statistics drop the
+    // entire collector without changing the successful dispatch response.
+    const uncheckedLength = contentLength === undefined;
+    if (uncheckedLength) {
+      contentLength = response.headers.get('content-length');
+    }
+    // Keep additional diagnostic parsing bounded, including tolerated leading
+    // zeroes in an already validated JSON response's declared length.
+    if (contentLength !== null && (typeof contentLength !== 'string' || contentLength.length > 16
+      || (uncheckedLength && (!/^\d+$/.test(contentLength) || Number(contentLength) > MAX_JSON_BYTES)))) {
+      diagnostics.failed = true;
+      return;
+    }
+    const encoding = response.headers.get('content-encoding');
+    let encodingIndex = 0;
+    if (encoding !== null) {
+      encodingIndex = 6;
+      if (typeof encoding === 'string' && encoding.length <= 16) {
+        switch (encoding.trim().toLowerCase()) {
+          case 'identity': encodingIndex = 1; break;
+          case 'gzip': encodingIndex = 2; break;
+          case 'br': encodingIndex = 3; break;
+          case 'deflate': encodingIndex = 4; break;
+          case 'zstd': encodingIndex = 5; break;
+        }
+      }
+    }
+    const row = diagnostics.rows[category];
+    row.n++;
+    row.b += size;
+    row.c += chunks;
+    row.e[encodingIndex]++;
+    row.h[contentLength === null ? 1 : 0]++;
+    if (contentLength !== null) row.h[2] += Number(contentLength);
+  } catch {
+    diagnostics.failed = true;
+  }
+}
+
+function closeDiagnostics(diagnostics, complete) {
+  // A failed Promise.all can leave active reads in flight. Seal before copying
+  // so their eventual completion neither reads diagnostic headers nor mutates
+  // the one logged snapshot. No extra waiting or cancellation is introduced.
+  diagnostics.closed = true;
+  if (diagnostics.failed) return undefined;
+  try {
+    const stats = { v: 1, complete };
+    for (const category of DIAGNOSTIC_CATEGORIES) {
+      const row = diagnostics.rows[category];
+      stats[category] = { n: row.n, b: row.b, c: row.c, e: row.e.slice(), h: row.h.slice() };
+    }
+    return stats;
+  } catch {
+    diagnostics.failed = true;
+    return undefined;
+  }
+}
+
+async function boundedJson(response, diagnostics, category) {
   const contentLength = response.headers.get('content-length');
   if (contentLength !== null && (!/^\d+$/.test(contentLength) || Number(contentLength) > MAX_JSON_BYTES)) {
     fail('github_response_too_large');
@@ -99,14 +182,19 @@ async function boundedJson(response) {
       offset += chunk.byteLength;
     }
   }
+  let result;
   try {
-    return JSON.parse(JSON_DECODER.decode(bytes));
+    result = JSON.parse(JSON_DECODER.decode(bytes));
   } catch {
     fail('invalid_github_json');
   }
+  // Count once after EOF, strict decoding and JSON parsing. Do not instrument
+  // the read loop, retain response bodies, or let observation affect parsing.
+  if (diagnostics) observeResponse(diagnostics, category, response, size, chunks.length, contentLength);
+  return result;
 }
 
-async function github(fetchImpl, headers, path, { method = 'GET', body } = {}) {
+async function github(fetchImpl, headers, path, diagnostics, category, { method = 'GET', body } = {}) {
   // All callers use constants or validated numeric IDs. No binding can change
   // the origin or redirect an Authorization header to another service.
   const url = new URL(path, API_ORIGIN);
@@ -136,9 +224,12 @@ async function github(fetchImpl, headers, path, { method = 'GET', body } = {}) {
     if (method === 'POST') {
       // Do not retry dispatch after an uncertain result: GitHub may already
       // have queued it. The next Cron check reads workflow state again.
-      if (response.status === 204) return { dispatchId: null };
+      if (response.status === 204) {
+        if (diagnostics) observeResponse(diagnostics, category, response, 0, 0);
+        return { dispatchId: null };
+      }
       if (response.status === 200) {
-        const result = await boundedJson(response);
+        const result = await boundedJson(response, diagnostics, category);
         const dispatchId = result?.workflow_run_id;
         if (!isObject(result) || !isId(dispatchId)) fail('invalid_dispatch_response');
         return { dispatchId };
@@ -146,7 +237,7 @@ async function github(fetchImpl, headers, path, { method = 'GET', body } = {}) {
       fail('github_dispatch_rejected');
     }
     if (response.status !== 200) fail('github_request_rejected');
-    return await boundedJson(response);
+    return await boundedJson(response, diagnostics, category);
   } finally {
     clearTimeout(timer);
   }
@@ -207,15 +298,18 @@ function admittedStepTime(data, run, now) {
 }
 
 export async function checkCollection(env, { fetchImpl = fetch, now = Date.now(), log = entry => console.log(JSON.stringify(entry)) } = {}) {
-  const record = (reason, details = {}) => {
+  let diagnostics = null;
+  const record = (reason, details = {}, complete = true) => {
     const result = { scheduler: 'pharma-collection', reason, ...details };
-    log(result);
+    const stats = diagnostics ? closeDiagnostics(diagnostics, complete) : undefined;
+    log(stats ? { ...result, stats } : result);
     return result;
   };
   try {
     if (!Number.isFinite(now)) fail('invalid_clock');
     const config = configuration(env);
     if (!config.enabled) return record('disabled');
+    diagnostics = responseDiagnostics(env, now);
     // Credentials belong only to this invocation; all GETs reuse its headers.
     const headers = {
       Authorization: `Bearer ${config.token}`,
@@ -226,10 +320,10 @@ export async function checkCollection(env, { fetchImpl = fetch, now = Date.now()
       'X-GitHub-Api-Version': API_VERSION,
       'User-Agent': 'pharma-radar-collection-scheduler',
     };
-    const workflow = await github(fetchImpl, headers, workflowPath);
+    const workflow = await github(fetchImpl, headers, workflowPath, diagnostics, 'metadata');
     if (!isObject(workflow) || !isId(workflow.id) || workflow.path !== `.github/workflows/${WORKFLOW}` || typeof workflow.state !== 'string') fail('invalid_workflow_metadata');
     if (workflow.state !== 'active') return record('workflow_disabled');
-    const variable = await github(fetchImpl, headers, `${repositoryPath}/actions/variables/COLLECT_ENABLED`);
+    const variable = await github(fetchImpl, headers, `${repositoryPath}/actions/variables/COLLECT_ENABLED`, diagnostics, 'flag');
     if (!isObject(variable) || variable.name !== 'COLLECT_ENABLED' || !['true', 'false'].includes(variable.value)) fail('invalid_collection_flag');
     if (variable.value !== 'true') return record('collection_disabled');
 
@@ -238,7 +332,7 @@ export async function checkCollection(env, { fetchImpl = fetch, now = Date.now()
     // queued runs that completed recently can fall outside this heuristic;
     // workflow concurrency and the database gate still prevent extra work.
     const createdSince = encodeURIComponent(`>=${new Date(now - HISTORY_CREATION_WINDOW_MS).toISOString()}`);
-    const recentData = await github(fetchImpl, headers, `${workflowPath}/runs?branch=${REF}&per_page=${RECENT_RUN_LIMIT}&created=${createdSince}`);
+    const recentData = await github(fetchImpl, headers, `${workflowPath}/runs?branch=${REF}&per_page=${RECENT_RUN_LIMIT}&created=${createdSince}`, diagnostics, 'history');
     const runs = validateRunList(recentData, workflow.id, now, RECENT_RUN_LIMIT);
     for (const run of runs) {
       if (run.status !== 'completed') {
@@ -247,7 +341,7 @@ export async function checkCollection(env, { fetchImpl = fetch, now = Date.now()
       }
       if (run.conclusion === 'action_required') fail('workflow_action_required');
       if (run.conclusion === 'skipped' || now - run.activityTime >= LOOKBACK_MS) continue;
-      const jobs = await github(fetchImpl, headers, `${repositoryPath}/actions/runs/${run.id}/jobs?filter=latest&per_page=10`);
+      const jobs = await github(fetchImpl, headers, `${repositoryPath}/actions/runs/${run.id}/jobs?filter=latest&per_page=10`, diagnostics, 'jobs');
       const admittedAt = admittedStepTime(jobs, run, now);
       if (admittedAt !== null && now - admittedAt < MIN_INTERVAL_MS) return record('recent_collection', { runId: run.id });
     }
@@ -256,7 +350,7 @@ export async function checkCollection(env, { fetchImpl = fetch, now = Date.now()
     // Before any POST (or dry-run due), find even old queued runs outside the
     // history window. Concurrency and DB admission protect the remaining race.
     const activeLists = await Promise.all(ACTIVE_STATUSES.map(async status => {
-      const data = await github(fetchImpl, headers, `${workflowPath}/runs?branch=${REF}&status=${status}&per_page=1`);
+      const data = await github(fetchImpl, headers, `${workflowPath}/runs?branch=${REF}&status=${status}&per_page=1`, diagnostics, 'active');
       const runs = validateRunList(data, workflow.id, now, 1);
       if (runs.some(run => run.status !== status)) fail('invalid_workflow_runs');
       return runs;
@@ -267,11 +361,11 @@ export async function checkCollection(env, { fetchImpl = fetch, now = Date.now()
       return record('active_run', { runId: active.id });
     }
     if (config.dryRun) return record('dry_run_due');
-    const result = await github(fetchImpl, headers, `${workflowPath}/dispatches`, { method: 'POST', body: { ref: REF, inputs: { trigger_source: 'cloudflare' } } });
+    const result = await github(fetchImpl, headers, `${workflowPath}/dispatches`, diagnostics, 'dispatch', { method: 'POST', body: { ref: REF, inputs: { trigger_source: 'cloudflare' } } });
     return record('dispatched', result.dispatchId === null ? {} : { runId: result.dispatchId });
   } catch (error) {
     const reason = error instanceof SchedulerError ? error.reason : 'scheduler_internal_error';
-    record(reason);
+    record(reason, {}, false);
     // No response bodies, injected values, nested causes or original errors.
     throw new SchedulerError(reason);
   }
