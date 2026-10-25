@@ -1,10 +1,11 @@
 // Small building blocks shared by feed items, detail pages and lists.
 import { useState } from "react";
+import { Link } from "react-router";
 import type { FeedItemSummary, MediaView } from "@aihot/contracts/site";
 import { IconBookmark } from "../../components/icons";
 import { SourceAvatar } from "../../components/ui/SourceAvatar";
 import { Lightbox } from "../../components/ui/Lightbox";
-import { toggleStar, useIsStarred } from "../../lib/local-state";
+import { STARRED_LIMIT, toggleStar, useIsStarred } from "../../lib/local-state";
 
 /** "IT之家（RSS）" or, for X, avatar + display name + @handle. */
 export function SourceLine({ item, avatarSize = 16, className = "" }: { item: Pick<FeedItemSummary, "source" | "x" | "channel">; avatarSize?: number; className?: string }) {
@@ -55,7 +56,7 @@ export function MediaThumbs({ media, className = "" }: { media: MediaView[]; cla
 export function StarButton({ item, size = 26, className = "" }: { item: Pick<FeedItemSummary, "id" | "title" | "summary" | "source" | "publishedAt" | "score" | "selected"> & Partial<Pick<FeedItemSummary,"publicationTime">>; size?: number; className?: string }) {
   const starred = useIsStarred(item.id);
   const [pulse, setPulse] = useState(0);
-  const [storageError, setStorageError] = useState(false);
+  const [saveError, setSaveError] = useState<"limit" | "storage" | null>(null);
   const on = starred;
   return (
     <><button
@@ -72,7 +73,7 @@ export function StarButton({ item, size = 26, className = "" }: { item: Pick<Fee
           ...(item.publicationTime?.precision === "day" ? {publishedDate:item.publicationTime.date} : {}),
           ...(item.publicationTime ? {publicationTime:item.publicationTime} : {}),
         });
-        setStorageError(added === null);
+        setSaveError(added === "limit" ? "limit" : added === null ? "storage" : null);
         if (added === true) setPulse((p) => p + 1);
       }}
       style={{ width: Math.max(44, size), height: Math.max(44, size) }}
@@ -82,9 +83,9 @@ export function StarButton({ item, size = 26, className = "" }: { item: Pick<Fee
         <IconBookmark size={Math.round(size * 0.6)} filled={on} />
       </span>
     </button>
-    {storageError && <div role="alert" className="fixed bottom-[calc(80px+env(safe-area-inset-bottom))] left-4 right-4 z-[70] mx-auto flex max-w-md items-center gap-3 rounded-tile border border-line bg-surface px-4 py-3 text-[13px] text-hot shadow-[var(--shadow-pop)] lg:bottom-6">
-      <p className="flex-1">浏览器存储已满或不可用，收藏状态未能保存。请检查浏览器存储后重试。</p>
-      <button type="button" aria-label="关闭收藏错误提示" onClick={() => setStorageError(false)} className="min-h-11 shrink-0 px-2">关闭</button>
+    {saveError && <div role="alert" className="fixed bottom-[calc(80px+env(safe-area-inset-bottom))] left-4 right-4 z-[70] mx-auto flex max-w-md items-center gap-3 rounded-tile border border-line bg-surface px-4 py-3 text-[13px] text-hot shadow-[var(--shadow-pop)] lg:bottom-6">
+      <div className="flex-1">{saveError === "limit" ? <><p>阅读清单已达 {STARRED_LIMIT} 条上限，这条未添加，已有收藏已保留。可先导出备份，再移除不需要的收藏后添加。</p><Link to="/starred" className="relative z-10 inline-flex min-h-11 items-center underline underline-offset-4">管理阅读清单 →</Link></> : <p>浏览器存储已满或不可用，收藏状态未能保存。请检查浏览器存储后重试。</p>}</div>
+      <button type="button" aria-label="关闭收藏错误提示" onClick={() => setSaveError(null)} className="min-h-11 min-w-11 shrink-0 px-2">关闭</button>
     </div>}</>
   );
 }
