@@ -212,7 +212,7 @@ export async function chatJson<S extends z.ZodType>(opts: ChatJsonOptions<S>): P
       requestSummary: { promptVersion: opts.promptVersion, systemHash: sha256(opts.system), userHash: sha256(userText), userChars: userText.length, temperature, maxTokens },
       attemptTag: opts.attemptTag,
     },
-    async () => {
+    async ({ observeRequestId }) => {
       const started = Date.now();
       let res: Response;
       try {
@@ -226,6 +226,7 @@ export async function chatJson<S extends z.ZodType>(opts: ChatJsonOptions<S>): P
         if (isConnectFailure(error)) throw new ProviderRejectedError(`connect failed: ${String(error)}`, null, true);
         throw error;
       }
+      observeRequestId(res.headers.get("x-request-id"));
       const text = await res.text();
       if (!res.ok) {
         const retryable = res.status === 429 || res.status >= 500;
