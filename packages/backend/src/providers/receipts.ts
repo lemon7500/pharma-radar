@@ -58,6 +58,11 @@ export interface CallOutcome {
   cost?: { amount: number; currency: string; basis: "actual" | "estimated" } | null;
 }
 
+/** Per-attempt diagnostics only; observing an ID never makes an unknown result retryable. */
+export interface ProviderCallContext {
+  observeRequestId(value: unknown): void;
+}
+
 export interface ReceiptRequest {
   service: string;
   model?: string | null;
@@ -108,7 +113,7 @@ async function checkBudget(tx: Db, req: ReceiptRequest): Promise<{ workload: Wor
  * Runs a paid request at most once per logical key and returns its raw response.
  * The caller parses the response and commits business results, then calls completeReceipt.
  */
-export async function paidRequest(req: ReceiptRequest, call: () => Promise<CallOutcome>): Promise<ReceiptResult> {
+export async function paidRequest(req: ReceiptRequest, call: (context: ProviderCallContext) => Promise<CallOutcome>): Promise<ReceiptResult> {
   const logicalKey = logicalKeyFor(req);
 
   const claimed = await sql.begin(async (tx) => {
@@ -149,16 +154,29 @@ export async function paidRequest(req: ReceiptRequest, call: () => Promise<CallO
 
   const { id: receiptId, attemptId } = claimed;
   const started = Date.now();
+  let observedRequestId: string | null = null;
+  const context: ProviderCallContext = {
+    observeRequestId(value) {
+      // Keep one complete, bounded ID, never arbitrary headers or a truncated ID.
+      if (observedRequestId === null && typeof value === "string"
+          && value.length > 0 && value.length <= 256
+          && /^[A-Za-z0-9]/.test(value) && !/[^A-Za-z0-9._:-]/.test(value)) {
+        observedRequestId = value;
+      }
+    },
+  };
   let outcome: CallOutcome;
   try {
-    outcome = await call();
+    outcome = await call(context);
   } catch (error) {
     const status = error instanceof ProviderRejectedError ? "failed" : "unknown";
     // "unknown": the request may have reached the provider (timeout, reset): do not re-send automatically.
     const message = (error instanceof ProviderRejectedError ? error.message : String(error)).slice(0, 2000);
     await sql.begin(async (tx) => {
       await tx`UPDATE receipts SET status = ${status}, error = ${message}, updated_at = now() WHERE id = ${receiptId}`;
-      await tx`UPDATE receipt_attempts SET status = ${status}, error = ${message}, latency_ms = ${Date.now() - started}, finished_at = now() WHERE id = ${attemptId}`;
+      // The receipt may still contain a preceding attempt's ID/response. Only this
+      // attempt receives the observed ID; the original exception and status stay unchanged.
+      await tx`UPDATE receipt_attempts SET status = ${status}, error = ${message}, request_id = ${observedRequestId}, latency_ms = ${Date.now() - started}, finished_at = now() WHERE id = ${attemptId}`;
     });
     throw error;
   }
